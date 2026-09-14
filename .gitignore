@@ -1,0 +1,23 @@
+# dependencies
+node_modules/
+
+# CDK
+cdk.out/
+cdk.context.json
+*.d.ts
+
+# secrets — never commit these. Stripe keys live in SSM Parameter Store.
+.env
+.env.*
+*.pem
+!.env.example
+
+# build output
+dist/
+*.tsbuildinfo
+
+# editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.log
