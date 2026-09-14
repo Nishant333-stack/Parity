@@ -1,6 +1,8 @@
 import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import { EventPipeline } from './constructs/event-pipeline';
+import { Ledger } from './constructs/ledger';
+import { Projector } from './constructs/projector';
 import { WebhookIngress } from './constructs/webhook-ingress';
 
 /**
@@ -28,6 +30,15 @@ export class ParityStack extends cdk.Stack {
       queue: pipeline.queue,
     });
 
+    const ledger = new Ledger(this, 'Ledger');
+
+    new Projector(this, 'Projector', {
+      queue: pipeline.queue,
+      cluster: ledger.cluster,
+      databaseName: ledger.databaseName,
+      archiveBucket: ledger.archiveBucket,
+    });
+
     new cdk.CfnOutput(this, 'WebhookUrl', {
       value: ingress.webhookUrl,
       description: 'Point the Stripe webhook endpoint at this URL',
@@ -46,6 +57,25 @@ export class ParityStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'DedupeTableName', {
       value: pipeline.dedupeTable.tableName,
       description: 'One row per Stripe event id',
+    });
+
+    new cdk.CfnOutput(this, 'LedgerClusterArn', {
+      value: ledger.cluster.clusterArn,
+      description: 'RDS Data API resource ARN for the ledger cluster',
+    });
+
+    new cdk.CfnOutput(this, 'LedgerSecretArn', {
+      value: ledger.cluster.secret!.secretArn,
+      description: 'Secrets Manager ARN the Data API uses to authenticate',
+    });
+
+    new cdk.CfnOutput(this, 'LedgerDatabaseName', {
+      value: ledger.databaseName,
+    });
+
+    new cdk.CfnOutput(this, 'ArchiveBucketName', {
+      value: ledger.archiveBucket.bucketName,
+      description: 'Raw Stripe event archive — Athena and rebuild-from-archive read from here',
     });
   }
 }
