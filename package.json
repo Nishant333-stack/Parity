@@ -10,6 +10,7 @@
     "deploy": "cdk deploy",
     "destroy": "cdk destroy",
     "secret": "bash scripts/set-secret.sh",
+    "register-webhook": "bash scripts/register-webhook.sh",
     "verify": "bash scripts/verify-roundtrip.sh",
     "logs": "aws logs tail /aws/lambda/parity-webhook-ingress --follow --profile parity --region ap-south-1"
   },
