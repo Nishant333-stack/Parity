@@ -9,6 +9,7 @@
     "diff": "cdk diff",
     "deploy": "cdk deploy",
     "destroy": "cdk destroy",
+    "setup": "bash scripts/setup.sh",
     "secret": "bash scripts/set-secret.sh",
     "register-webhook": "bash scripts/register-webhook.sh",
     "verify": "bash scripts/verify-roundtrip.sh",
