@@ -14,11 +14,12 @@ real money. Live-mode events are refused at the ingress by design.
 
 ## Status
 
-**Week 1 — foundations.** The webhook round-trip: an HTTP API that verifies Stripe
-signatures and rejects forgeries before doing any work.
+**Weeks 1–3 — ingestion and the ledger.** The webhook round-trip, exactly-once
+ingestion onto an ordered queue, and a double-entry ledger projected from it —
+balanced by a database constraint, idempotent by Stripe event id, rebuildable
+from an S3 archive.
 
-Not built yet: dedupe and SQS FIFO (Week 2), the ledger (Week 3), v2 events (Week 4),
-reconciliation (Week 5).
+Not built yet: v2 events (Week 4), reconciliation (Week 5).
 
 ## Environment
 
@@ -27,21 +28,25 @@ reconciliation (Week 5).
 | AWS project | 703091484164 |
 | Region | `ap-south-1` — **locked**, derived from the account contact address |
 | CLI profile | `parity` |
-| Aurora engine | PostgreSQL `17.10` (pinned — see below) |
+| Aurora engine | PostgreSQL, Express Configuration (version not pinnable — see ADR 0002) |
+| Ledger cluster | `parity-ledger` — provisioned by `scripts/create-ledger-cluster.sh`, **not** CDK |
 
 Credentials last 12 hours. Renew with `aws login --profile parity`.
 
-### Two constraints worth knowing before you touch infrastructure
+### Constraints worth knowing before you touch infrastructure
 
 **The Region cannot change.** On the new AWS experience every project shares one Region.
 `bin/parity.ts` hard-codes it rather than reading `AWS_REGION`, so a stray environment
 variable can never silently relocate resources. Lambda@Edge, StackSets, and all
 cross-Region work are unavailable.
 
-**The RDS Data API is engine-version-gated.** Aurora PostgreSQL `13.9` reports
-`SupportsHttpEndpoint: false`; `13.23` reports `true`. The Data API is what keeps Lambda
-out of a VPC and avoids a ~$32/month NAT Gateway, so when the cluster arrives in Week 3 it
-must pin its version explicitly and set `enableDataApi: true`. Never let CDK default it.
+**This account's free plan blocks standard Aurora clusters.** `cdk deploy` against a
+CDK-managed `rds.DatabaseCluster` fails outright — only clusters created
+`WithExpressConfiguration` are allowed, and CloudFormation has no property for that. The
+ledger cluster is provisioned out of band by `scripts/create-ledger-cluster.sh`, which also
+means the engine version can't be pinned (Express Configuration doesn't support choosing
+one) and there's no VPC at all, rather than an empty one. Full story in
+[ADR 0002](docs/adr/0002-data-api-instead-of-vpc.md).
 
 Firehose is not subscribed on the free plan (`SubscriptionRequiredException`), so the
 event archive is a direct batched write from the projector to S3 rather than
@@ -131,8 +136,22 @@ bin/parity.ts                        app entry; Region lock and log-retention as
 lib/parity-stack.ts                  stack composition, SSM parameter paths
 lib/aspects/log-retention.ts         forces 7-day retention on every log group
 lib/constructs/webhook-ingress.ts    HTTP API + verifying Lambda
+lib/constructs/event-pipeline.ts     dedupe table + FIFO queue + DLQ
+lib/constructs/ledger.ts             S3 event archive (the cluster is NOT here — see ADR 0002)
+lib/constructs/projector.ts          SQS-triggered Lambda that projects into the ledger
 src/handlers/webhook.ts              signature verification, livemode guard
-src/lib/secrets.ts                   cached SSM SecureString reads
+src/handlers/projector.ts            archive + apply each event, report partial batch failures
+src/lib/secrets.ts                   cached SSM SecureString/String reads
+src/lib/data-api.ts                  RDS Data API client, resolves ledger identity from SSM
+src/lib/projection.ts                Stripe event → journal entries
+src/lib/apply-event.ts               idempotent apply, shared by the projector and rebuild
+src/lib/archive.ts                   batched raw-event writes to S3
+db/schema.sql                        transactions/entries/processed_events + balance trigger
+scripts/create-ledger-cluster.sh     provisions the Express Configuration cluster (not CDK)
+scripts/migrate.ts                   applies db/schema.sql via the Data API
+scripts/test-balance-constraint.ts   the central claim: unbalanced entries are rejected
+scripts/rebuild-ledger.ts            replays the S3 archive through apply-event.ts
+scripts/verify-template.ts           synthesized-template assertions (no VPC, no NAT gateway)
 ```
 
 ## Cost guardrails
