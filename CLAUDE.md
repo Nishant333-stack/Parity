@@ -173,6 +173,17 @@ Lambda runtime, whose bundled package set varies by version.
   The script's default is now 8, comfortably under the ceiling; a real
   production account would need a concurrency limit increase before this
   pipeline could handle real traffic bursts.
+- `parity-cfn-exec-role` (the CloudFormation execution role, not the OIDC
+  trigger role) needs its own read access to the CDK bootstrap asset bucket
+  (`cdk-hnb659fds-assets-*`) — the trigger role's read+write access there
+  does not cover it. CloudFormation, assumed as the exec role, is what
+  actually calls `Lambda:UpdateFunctionCode`, which fetches the code zip
+  using the exec role's own permissions, not the trigger role's. Missed
+  originally because early CI deploys never changed Lambda code; the first
+  one that did failed with `s3:GetObject AccessDenied` and pushed the stack
+  to `UPDATE_ROLLBACK_FAILED`. Recovered with
+  `aws cloudformation continue-update-rollback --stack-name ParityStack`.
+  See README's CI/CD section.
 
 ## Division of labour
 

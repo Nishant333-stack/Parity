@@ -268,6 +268,21 @@ gh variable set AWS_REGION --body "ap-south-1"
 gh workflow run deploy.yml
 ```
 
+A least-privilege split like this has a real, non-obvious failure mode: the exec role
+needs permissions the *trigger* role already has for an entirely different reason. Found
+live, in CI, not in review — a deploy that changed Lambda code (not just IAM/config) failed
+with `s3:GetObject` `AccessDenied` on the CDK asset bucket, from `parity-cfn-exec-role`, and
+took the stack to `UPDATE_ROLLBACK_FAILED`. The trigger role publishes new Lambda zips to
+`cdk-hnb659fds-assets-*` (needs read+write there); CloudFormation, assuming the *exec* role,
+is what actually calls `Lambda:UpdateFunctionCode` and fetches that zip — and the exec
+role's policy had never been given read access to that bucket, because every previous CI
+deploy happened not to touch a resource that needed it. Fixed by adding a scoped, read-only
+`s3:GetObject`/`GetBucketLocation`/`ListBucket` statement to the exec role
+(`scripts/setup-github-oidc.sh`), recovering the stack with
+`aws cloudformation continue-update-rollback`, and re-running the deploy — which then
+succeeded from a clean OIDC-assumed role, not from local root credentials. See CLAUDE.md's
+Known noise.
+
 ## Cost guardrails
 
 7-day log retention is applied by a CDK Aspect to *every* log group, overriding any

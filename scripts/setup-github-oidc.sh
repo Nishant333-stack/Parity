@@ -219,6 +219,15 @@ EXEC_POLICY="$(cat <<JSON
       ]
     },
     {
+      "Sid": "CdkAssetBucketRead",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:GetBucketLocation", "s3:ListBucket"],
+      "Resource": [
+        "arn:aws:s3:::cdk-hnb659fds-assets-${ACCOUNT_ID}-${REGION}",
+        "arn:aws:s3:::cdk-hnb659fds-assets-${ACCOUNT_ID}-${REGION}/*"
+      ]
+    },
+    {
       "Sid": "Lambda",
       "Effect": "Allow",
       "Action": "lambda:*",
