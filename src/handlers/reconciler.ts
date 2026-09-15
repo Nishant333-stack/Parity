@@ -26,6 +26,7 @@ export const handler = async (): Promise<void> => {
     ledgerCashCents: result.ledgerCashCents,
     driftCents: result.driftCents,
     strandedClaims: result.strandedClaims,
+    missingEvents: result.missingEvents,
     backfilled: result.backfilled,
     backfillFailed: result.backfillFailed,
   });

@@ -75,6 +75,13 @@ json.dump(
 )
 ' <<<"$VALUE"
 
+# Length and prefix are safe to echo and are exactly what you need to
+# confirm the right thing landed. Captured before unsetting VALUE below —
+# referencing it after unset is itself a bug under `set -u`: it aborts the
+# script with "unbound variable" right after the parameter has already been
+# written, which reads as a failure when the secret actually landed fine.
+VALUE_LEN="${#VALUE}"
+VALUE_PREFIX="${VALUE:0:6}"
 unset VALUE
 
 aws ssm put-parameter \
@@ -82,6 +89,4 @@ aws ssm put-parameter \
   --profile "$PROFILE" \
   --region "$REGION" >/dev/null
 
-# Length and prefix are safe to echo and are exactly what you need to
-# confirm the right thing landed. A whsec_ is 38 characters.
-echo "stored $NAME — ${#VALUE} chars, starts '${VALUE:0:6}', SecureString, $REGION" >&2
+echo "stored $NAME — $VALUE_LEN chars, starts '$VALUE_PREFIX', SecureString, $REGION" >&2

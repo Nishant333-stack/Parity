@@ -9,12 +9,13 @@ waiting for the schedule. Read alongside `src/lib/reconcile.ts`.
 EventBridge (rate: 1 hour)
   ▼
 parity-reconciler (Lambda, ARM64, Node 22)
-  │  1. scan the dedupe table for stranded CLAIMED rows (> 15 min old)
-  │  2. for each: fetch from Stripe's v1 Events API, applyEvent(), delete the row
-  │  3. sum Stripe's balance transactions (charge + refund, gross amount)
-  │  4. sum the ledger's stripe:cash account
-  │  5. drift = stripe total − ledger total
-  │  6. publish DriftCents to CloudWatch (Parity/Reconciler namespace)
+  │  1a. scan the dedupe table for stranded CLAIMED rows (> 15 min old)   ─┐
+  │  1b. list Stripe events (charge.*) missing from processed_events      ┴─ run in parallel
+  │      → for each found by either pass: applyEvent() (idempotent — safe to overlap)
+  │  2. sum Stripe's balance transactions (charge + refund, gross amount)
+  │  3. sum the ledger's stripe:cash account
+  │  4. drift = stripe total − ledger total
+  │  5. publish DriftCents to CloudWatch (Parity/Reconciler namespace)
   ▼
 CloudWatch Alarm (ABS(DriftCents) > 0)
   │  breaches on nonzero drift, or on the metric simply not showing up
@@ -22,32 +23,43 @@ CloudWatch Alarm (ABS(DriftCents) > 0)
 SNS topic parity-reconciler-drift        no subscribers by default — see below
 ```
 
-## Step 1–2 — recover before you measure
+## Step 1 — two recovery passes, not one
 
 ```ts
-const stranded = await findStrandedClaims();
-for (const claim of stranded) {
-  const event = await stripe.events.retrieve(claim.eventId);
-  await applyEvent(event);
-  await dynamo.send(new DeleteCommand({ ... }));
-}
+const [stranded, missing] = await Promise.all([recoverStrandedClaims(), recoverMissingLedgerEvents()]);
 ```
 
-A stranded claim is a DynamoDB row still `CLAIMED` more than fifteen minutes
-after it was claimed — the signature of the residual crash window ADR 0003
-accepts rather than closes: the process died between claiming an event id and
-either enqueuing it or releasing the claim. `applyEvent()` here is the exact
-same function `src/handlers/projector.ts` calls for live traffic, not a
-second implementation — see `docs/adr/0005-comparing-against-stripes-own-books.md`
-for why that sharing matters, and why the row is deleted rather than marked
-resolved once it's recovered.
+**Pass 1a**, `recoverStrandedClaims()`, is ADR 0003's residual crash window:
+a DynamoDB row still `CLAIMED` more than fifteen minutes after being
+claimed — the process died between claiming an event id and either
+enqueuing it or releasing the claim. Fast and targeted, but it can only see
+events that got *past* signature verification.
 
-This runs *before* the drift calculation, deliberately: a claim backfilled in
-this same pass already shows up in `ledgerCashTotal()` by the time step 4
-runs, so recovering it and reporting it as drift never both happen in the
-same reconciliation.
+**Pass 1b**, `recoverMissingLedgerEvents()`, exists because pass 1a isn't
+the whole story. Running this project for real found the gap: a period
+existed where two webhook endpoints shared one URL, each signing with its
+own secret, so deliveries signed with the *wrong* one failed signature
+verification and were rejected before any DynamoDB claim ever happened
+(CLAUDE.md's Known noise). No row, nothing for pass 1a to find. Pass 1b
+instead lists every `charge.succeeded` / `charge.refunded` /
+`charge.dispute.created` event Stripe has ever sent and diffs the ids
+directly against `processed_events` — the table ADR 0004 already
+established as the real source of truth for "has this been applied," not
+DynamoDB's claim state.
 
-## Steps 3–5 — the actual question
+Both passes call the same `applyEvent()` `src/handlers/projector.ts` uses
+for live traffic — not a second implementation — and both can find and
+backfill the same event without coordinating: `applyEvent()`'s own
+idempotency (ADR 0004's `ON CONFLICT DO NOTHING`) makes a second attempt a
+safe no-op. Full reasoning in
+`docs/adr/0005-comparing-against-stripes-own-books.md`.
+
+Recovery runs *before* the drift calculation, deliberately: anything
+backfilled in this same pass already shows up in `ledgerCashTotal()` by the
+time step 3 runs, so recovering it and reporting it as drift never both
+happen in the same reconciliation.
+
+## Steps 2–4 — the actual question
 
 ```ts
 async function stripeCashTotal(): Promise<number> {
@@ -124,24 +136,33 @@ npm run logs:reconciler    # tail the live Lambda's logs
 `npm run reconcile` prints the same numbers the Lambda publishes:
 
 ```
-Stripe balance transactions (charge + refund): $41.00
-Ledger stripe:cash account:                    $41.00
+Stripe balance transactions (charge + refund): $121.00
+Ledger stripe:cash account:                    $121.00
 Drift:                                          $0.00
 
-Stranded claims found:  0
+Stranded claims found:   0
+Missing events found:    0
 Backfilled:              0
 Backfill failures:       0
 
 Ledger agrees with Stripe. Drift is $0.00.
 ```
 
-To see the alarm actually fire, the honest way is to break something on
-purpose: manually insert a balanced-but-wrong entry via the Data API (an
-amount that doesn't match what Stripe actually charged), run
-`npm run reconcile`, and watch `DriftCents` land nonzero in CloudWatch. That's
-also the sharpest illustration of what this ADR's opening paragraph means: a
-transaction like that passes the balance constraint (ADR 0004) perfectly —
-it's the reconciler, not the database, that catches it.
+**This already happened for real, not just as an illustration.** The first
+run against this project's actual history reported `Drift: $40.00` — two
+real `charge.succeeded` events from the two-webhook-endpoint period that
+pass 1a couldn't see. `Missing events found: 2`, both backfilled, and the
+second run landed at exactly `$0.00`. That's the incident pass 1b
+(`recoverMissingLedgerEvents()`) exists to catch, found and closed on its
+first real use.
+
+To see the alarm fire on a bug rather than a historical gap, the honest way
+is to break something on purpose: manually insert a balanced-but-wrong entry
+via the Data API (an amount that doesn't match what Stripe actually
+charged), run `npm run reconcile`, and watch `DriftCents` land nonzero in
+CloudWatch. That's also the sharpest illustration of what this ADR's opening
+paragraph means: a transaction like that passes the balance constraint (ADR
+0004) perfectly — it's the reconciler, not the database, that catches it.
 
 ## Known gap
 

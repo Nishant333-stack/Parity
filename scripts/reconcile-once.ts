@@ -22,9 +22,10 @@ async function main(): Promise<void> {
   console.log(`  Ledger stripe:cash account:                    ${money(result.ledgerCashCents)}`);
   console.log(`  Drift:                                         ${money(result.driftCents)}`);
   console.log();
-  console.log(`  Stranded claims found:  ${result.strandedClaims}`);
-  console.log(`  Backfilled:             ${result.backfilled}`);
-  console.log(`  Backfill failures:      ${result.backfillFailed}`);
+  console.log(`  Stranded claims found:   ${result.strandedClaims}`);
+  console.log(`  Missing events found:    ${result.missingEvents}`);
+  console.log(`  Backfilled:              ${result.backfilled}`);
+  console.log(`  Backfill failures:       ${result.backfillFailed}`);
   console.log();
 
   if (result.driftCents === 0) {
