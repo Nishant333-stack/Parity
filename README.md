@@ -14,13 +14,26 @@ real money. Live-mode events are refused at the ingress by design.
 
 ## Status
 
-**Weeks 1–5 — the whole loop.** The webhook round-trip, exactly-once ingestion onto an
-ordered queue, a double-entry ledger projected from it (balanced by a database constraint,
-idempotent by Stripe event id, rebuildable from an S3 archive), and an hourly reconciler
-that sums Stripe's own balance transactions, compares them against the ledger's
-`stripe:cash` account, and alarms on nonzero drift. CI/CD via GitHub Actions, OIDC-deployed,
-no stored AWS credentials. A public, read-only dashboard (one Lambda Function URL, no
-separate hosting) shows all of it live — see Dashboard below.
+**The whole loop, tested and chaos-tested, not just built.** The webhook round-trip,
+exactly-once ingestion onto an ordered queue, a double-entry ledger projected from it
+(balanced by a database constraint, idempotent by Stripe event id, rebuildable from an S3
+archive), money in (`charge.succeeded`/`.refunded`, disputes) and money out
+(`payout.paid`), and an hourly reconciler that sums Stripe's own balance transactions,
+compares them against the ledger, and alarms on nonzero drift. A unit test suite
+(`npm test`) covers the pure projection/grouping logic; two chaos injectors
+(`npm run chaos:forged-signature`, `npm run chaos:replay-storm`) prove the dedupe and
+signature invariants against live AWS state, not just an HTTP status code. A latency
+metric (p50/p99, CloudWatch-native) answers "how fresh is the ledger," alongside the
+drift-in-cents answer to "is it correct." CI/CD via GitHub Actions, OIDC-deployed, no
+stored AWS credentials, two roles split by privilege (README's CI/CD section). A public,
+read-only dashboard (one Lambda Function URL, no separate hosting) shows all of it live —
+see Dashboard below.
+
+Every one of those pieces found something real while being built, not hypothetically:
+a $40.00 reconciliation gap, a dispute-fund-hold booked on the wrong event, a broken
+archive format, and an IAM least-privilege gap that only a real Lambda code deploy through
+CI could surface — each found, understood, fixed, and left documented rather than quietly
+patched. `docs/adr/` and CLAUDE.md's "Known noise" are where those live.
 
 "Week 4" turned out not to be adopting Stripe's v2 events API as originally planned —
 checked directly against this account, `/v2/core/events` doesn't carry this project's event
