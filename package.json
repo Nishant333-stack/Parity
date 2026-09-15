@@ -15,6 +15,7 @@
     "verify": "bash scripts/verify-roundtrip.sh",
     "verify:template": "npx ts-node --prefer-ts-exts scripts/verify-template.ts",
     "create-ledger-cluster": "bash scripts/create-ledger-cluster.sh",
+    "setup-github-oidc": "bash scripts/setup-github-oidc.sh",
     "migrate": "bash scripts/migrate.sh",
     "test:ledger": "bash scripts/test-balance-constraint.sh",
     "rebuild-ledger": "bash scripts/rebuild-ledger.sh",

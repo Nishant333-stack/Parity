@@ -152,6 +152,33 @@ scripts/migrate.ts                   applies db/schema.sql via the Data API
 scripts/test-balance-constraint.ts   the central claim: unbalanced entries are rejected
 scripts/rebuild-ledger.ts            replays the S3 archive through apply-event.ts
 scripts/verify-template.ts           synthesized-template assertions (no VPC, no NAT gateway)
+scripts/setup-github-oidc.sh         provisions the GitHub Actions OIDC provider + deploy role
+.github/workflows/ci.yml             typecheck + verify:template on every push/PR
+.github/workflows/deploy.yml         manual (workflow_dispatch) cdk deploy via OIDC
+```
+
+## CI/CD
+
+`.github/workflows/ci.yml` runs on every push and PR: `typecheck` + `verify:template`. No
+AWS credentials touch GitHub at all — it's a pure local check against the synthesized
+template.
+
+`.github/workflows/deploy.yml` is manually triggered (`workflow_dispatch`) and deploys via
+GitHub's OIDC token exchanged for a short-lived AWS session — no stored access keys.
+`scripts/setup-github-oidc.sh` provisions the identity provider and a purpose-built IAM
+role (`parity-github-actions-deploy`) scoped to exactly the resources this stack manages,
+**not** the CDK bootstrap deploy role and not `AdministratorAccess`. That's deliberate: this
+account's SCP blocks `sts:AssumeRole` for root (see `CLAUDE.md`), so the bootstrap roles
+were never actually in the deploy path locally either — CDK silently falls back to running
+CloudFormation as the calling principal. The GitHub Actions role is built to *be* that
+calling principal directly, with its own scoped permissions, rather than to inherit a
+bootstrap role that this account may not let it assume anyway.
+
+```bash
+npm run setup-github-oidc                                    # one-time, idempotent
+gh variable set AWS_DEPLOY_ROLE_ARN --body "<role arn>"
+gh variable set AWS_REGION --body "ap-south-1"
+gh workflow run deploy.yml
 ```
 
 ## Cost guardrails

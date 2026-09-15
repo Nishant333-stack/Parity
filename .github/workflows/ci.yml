@@ -1,0 +1,31 @@
+name: CI
+
+# No AWS credentials anywhere in this workflow — everything here is a local
+# check: TypeScript compiles, and the synthesized CloudFormation template
+# satisfies the constraints that actually matter for this project (no VPC,
+# no NAT gateway, no CDK-managed Aurora cluster, the IAM the projector needs
+# to reach the ledger it doesn't own). See scripts/verify-template.ts and
+# docs/adr/0002-data-api-instead-of-vpc.md.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Verify synthesized template
+        run: npm run verify:template

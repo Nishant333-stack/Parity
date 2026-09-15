@@ -1,0 +1,42 @@
+name: Deploy
+
+# Manually triggered. No stored AWS credentials: authenticates via GitHub's
+# OIDC token exchanged for a short-lived session against a purpose-built IAM
+# role (scripts/setup-github-oidc.sh), scoped to exactly the resources
+# ParityStack manages — not the CDK bootstrap admin role, and not
+# AdministratorAccess. See that script's header comment for why.
+on:
+  workflow_dispatch: {}
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: aws-deploy
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Verify synthesized template
+        run: npm run verify:template
+
+      - name: Configure AWS credentials (OIDC, no stored keys)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: cdk deploy
+        run: npx cdk deploy --require-approval never
