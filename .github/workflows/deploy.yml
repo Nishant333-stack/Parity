@@ -1,10 +1,13 @@
 name: Deploy
 
-# Manually triggered. No stored AWS credentials: authenticates via GitHub's
-# OIDC token exchanged for a short-lived session against a purpose-built IAM
-# role (scripts/setup-github-oidc.sh), scoped to exactly the resources
-# ParityStack manages — not the CDK bootstrap admin role, and not
-# AdministratorAccess. See that script's header comment for why.
+# Manually triggered. No stored AWS credentials: GitHub's OIDC token is
+# exchanged for a short-lived session as parity-github-actions-deploy, which
+# only orchestrates the deploy (CloudFormation changeset calls, CDK asset
+# upload) and PassRoles into parity-cfn-exec-role — a second role, trusted
+# only by cloudformation.amazonaws.com, that CloudFormation itself assumes to
+# actually touch resources. Neither role is the CDK bootstrap's
+# cfn-exec-role, which carries AdministratorAccess on this account.
+# See scripts/setup-github-oidc.sh for the full reasoning.
 on:
   workflow_dispatch: {}
 
@@ -39,4 +42,4 @@ jobs:
           aws-region: ${{ vars.AWS_REGION }}
 
       - name: cdk deploy
-        run: npx cdk deploy --require-approval never
+        run: npx cdk deploy --require-approval never --role-arn "${{ vars.AWS_CFN_EXEC_ROLE_ARN }}"

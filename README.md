@@ -164,19 +164,27 @@ AWS credentials touch GitHub at all — it's a pure local check against the synt
 template.
 
 `.github/workflows/deploy.yml` is manually triggered (`workflow_dispatch`) and deploys via
-GitHub's OIDC token exchanged for a short-lived AWS session — no stored access keys.
-`scripts/setup-github-oidc.sh` provisions the identity provider and a purpose-built IAM
-role (`parity-github-actions-deploy`) scoped to exactly the resources this stack manages,
-**not** the CDK bootstrap deploy role and not `AdministratorAccess`. That's deliberate: this
-account's SCP blocks `sts:AssumeRole` for root (see `CLAUDE.md`), so the bootstrap roles
-were never actually in the deploy path locally either — CDK silently falls back to running
-CloudFormation as the calling principal. The GitHub Actions role is built to *be* that
-calling principal directly, with its own scoped permissions, rather than to inherit a
-bootstrap role that this account may not let it assume anyway.
+GitHub's OIDC token exchanged for a short-lived AWS session — no stored access keys, and
+**not** the CDK bootstrap's own execution role, which carries `AdministratorAccess` on this
+account (confirmed, not assumed). `scripts/setup-github-oidc.sh` provisions two roles
+instead:
+
+- `parity-github-actions-deploy` — what GitHub's OIDC token assumes. Orchestrates the
+  deploy (CloudFormation changeset calls, CDK asset upload, the bootstrap-version check)
+  and can `PassRole` into the second role. Nothing more.
+- `parity-cfn-exec-role` — trusted only by `cloudformation.amazonaws.com`, not by GitHub.
+  This is what CloudFormation itself assumes to actually create or update resources, scoped
+  to exactly what `ParityStack` manages.
+
+`cdk deploy --role-arn <parity-cfn-exec-role>` is what wires the second role in — without
+it, CDK defaults to the bootstrap role regardless of what the caller can or can't assume.
+The two-role split is what keeps a compromised or misconfigured GitHub Actions run from
+mattering more than its own narrow orchestration permissions.
 
 ```bash
 npm run setup-github-oidc                                    # one-time, idempotent
-gh variable set AWS_DEPLOY_ROLE_ARN --body "<role arn>"
+gh variable set AWS_DEPLOY_ROLE_ARN --body "<trigger role arn>"
+gh variable set AWS_CFN_EXEC_ROLE_ARN --body "<exec role arn>"
 gh variable set AWS_REGION --body "ap-south-1"
 gh workflow run deploy.yml
 ```
