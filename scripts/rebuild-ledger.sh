@@ -13,26 +13,23 @@ PROFILE="${PARITY_PROFILE:-parity}"
 REGION="${PARITY_REGION:-ap-south-1}"
 STACK="${PARITY_STACK:-ParityStack}"
 
-output() {
-  aws cloudformation describe-stacks \
-    --stack-name "$STACK" --profile "$PROFILE" --region "$REGION" \
-    --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text
-}
-
-export LEDGER_CLUSTER_ARN
-export LEDGER_SECRET_ARN
-export LEDGER_DATABASE
+export LEDGER_CLUSTER_ARN_PARAM="/parity/ledger/cluster-arn"
+export LEDGER_SECRET_ARN_PARAM="/parity/ledger/secret-arn"
+export LEDGER_DATABASE_PARAM="/parity/ledger/database-name"
 export ARCHIVE_BUCKET
 export AWS_PROFILE="$PROFILE"
 export AWS_REGION="$REGION"
 
-LEDGER_CLUSTER_ARN="$(output LedgerClusterArn)"
-LEDGER_SECRET_ARN="$(output LedgerSecretArn)"
-LEDGER_DATABASE="$(output LedgerDatabaseName)"
-ARCHIVE_BUCKET="$(output ArchiveBucketName)"
+aws ssm get-parameter --name "$LEDGER_CLUSTER_ARN_PARAM" \
+  --profile "$PROFILE" --region "$REGION" >/dev/null 2>&1 \
+  || { echo "no cluster recorded at $LEDGER_CLUSTER_ARN_PARAM — run: npm run create-ledger-cluster" >&2; exit 1; }
 
-if [[ -z "$LEDGER_CLUSTER_ARN" || "$LEDGER_CLUSTER_ARN" == "None" ]]; then
-  echo "could not read LedgerClusterArn from stack $STACK — is it deployed?" >&2
+ARCHIVE_BUCKET="$(aws cloudformation describe-stacks \
+  --stack-name "$STACK" --profile "$PROFILE" --region "$REGION" \
+  --query "Stacks[0].Outputs[?OutputKey=='ArchiveBucketName'].OutputValue" --output text)"
+
+if [[ -z "$ARCHIVE_BUCKET" || "$ARCHIVE_BUCKET" == "None" ]]; then
+  echo "could not read ArchiveBucketName from stack $STACK — is it deployed?" >&2
   exit 1
 fi
 

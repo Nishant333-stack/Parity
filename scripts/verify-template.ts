@@ -2,13 +2,25 @@
 //
 // Checks the synthesized CloudFormation template, not just that the code
 // compiles. Most of the expensive mistakes in this project are
-// template-level — a NAT Gateway, a missing EnableHttpEndpoint — and neither
-// shows up in `tsc --noEmit` or `cdk synth` succeeding.
+// template-level — a NAT Gateway, a missing grant — and neither shows up in
+// `tsc --noEmit` or `cdk synth` succeeding.
+//
+// The ledger cluster itself is NOT a CDK resource (see
+// lib/constructs/ledger.ts and docs/adr/0002-data-api-instead-of-vpc.md):
+// this account's free plan only allows Aurora clusters created
+// WithExpressConfiguration, which CloudFormation has no property for. So
+// "pin the engine version" and "assert EnableHttpEndpoint in the template"
+// don't apply here — those are asserted live, against the real cluster, by
+// scripts/create-ledger-cluster.sh at provisioning time. What this script
+// checks is what CDK actually does own: no VPC, no NAT gateway, no stray
+// AWS::RDS::DBCluster this stack would otherwise be responsible for
+// destroying, and the IAM the projector needs to reach the cluster it
+// doesn't own.
 //
 //   npm run verify:template
 //
 import { App } from 'aws-cdk-lib';
-import { Template } from 'aws-cdk-lib/assertions';
+import { Match, Template } from 'aws-cdk-lib/assertions';
 import { ParityStack } from '../lib/parity-stack';
 
 const app = new App();
@@ -27,33 +39,49 @@ function fail(msg: string): void {
   console.log(`  FAIL  ${msg}`);
   failed = true;
 }
-
-console.log('Data API is enabled and the engine version is pinned');
-try {
-  template.hasResourceProperties('AWS::RDS::DBCluster', { EnableHttpEndpoint: true });
-  pass('EnableHttpEndpoint: true');
-} catch (err) {
-  fail(`EnableHttpEndpoint is not true — ${firstLine(err)}`);
-}
-try {
-  template.hasResourceProperties('AWS::RDS::DBCluster', { EngineVersion: '17.10' });
-  pass('EngineVersion: 17.10');
-} catch (err) {
-  fail(`EngineVersion is not pinned to 17.10 — ${firstLine(err)}`);
+function firstLine(err: unknown): string {
+  return ((err as Error).message ?? String(err)).split('\n')[0];
 }
 
-console.log('\nNo NAT gateways, no internet gateway');
+console.log('No CDK-managed Aurora cluster, VPC, or NAT/internet gateway');
+for (const type of [
+  'AWS::RDS::DBCluster',
+  'AWS::EC2::VPC',
+  'AWS::EC2::NatGateway',
+  'AWS::EC2::InternetGateway',
+] as const) {
+  try {
+    template.resourceCountIs(type, 0);
+    pass(`${type} count is 0`);
+  } catch (err) {
+    fail(`${type} count is not 0 — ${firstLine(err)}`);
+  }
+}
+
+console.log('\nProjector can reach the externally-provisioned cluster');
 try {
-  template.resourceCountIs('AWS::EC2::NatGateway', 0);
-  pass('AWS::EC2::NatGateway count is 0');
+  template.hasResourceProperties('AWS::IAM::Policy', {
+    PolicyDocument: {
+      Statement: Match.arrayWith([
+        Match.objectLike({
+          Action: Match.arrayWith(['rds-data:ExecuteStatement', 'rds-data:BeginTransaction']),
+        }),
+      ]),
+    },
+  });
+  pass('IAM policy grants rds-data:* on the ledger cluster ARN');
 } catch (err) {
-  fail(`NAT gateway count is not 0 — ${firstLine(err)}`);
+  fail(`rds-data IAM grant missing — ${firstLine(err)}`);
 }
 try {
-  template.resourceCountIs('AWS::EC2::InternetGateway', 0);
-  pass('AWS::EC2::InternetGateway count is 0');
+  template.hasResourceProperties('AWS::IAM::Policy', {
+    PolicyDocument: {
+      Statement: Match.arrayWith([Match.objectLike({ Action: 'secretsmanager:GetSecretValue' })]),
+    },
+  });
+  pass('IAM policy grants secretsmanager:GetSecretValue on rds!cluster-* secrets');
 } catch (err) {
-  fail(`internet gateway count is not 0 — ${firstLine(err)}`);
+  fail(`secretsmanager IAM grant missing — ${firstLine(err)}`);
 }
 
 console.log('\n7-day log retention still applies to the new function');
@@ -67,13 +95,14 @@ try {
   fail(`projector log group retention is wrong — ${firstLine(err)}`);
 }
 
-function firstLine(err: unknown): string {
-  return ((err as Error).message ?? String(err)).split('\n')[0];
-}
-
 console.log();
 if (failed) {
   console.log('Template verification FAILED.');
   process.exit(1);
 }
 console.log('Template verification passed.');
+console.log(
+  '\nReminder: EnableHttpEndpoint and the engine version are NOT checked here — ' +
+    'the cluster is provisioned by scripts/create-ledger-cluster.sh, which asserts ' +
+    'HttpEndpointEnabled live against the real cluster before recording it in SSM.',
+);

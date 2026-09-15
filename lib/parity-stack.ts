@@ -17,6 +17,9 @@ export const SSM_PATHS = {
   stripeWebhookSecret: '/parity/stripe/webhook-secret',
 } as const;
 
+/** DB cluster identifier scripts/create-ledger-cluster.sh provisions. */
+export const LEDGER_CLUSTER_ID = 'parity-ledger';
+
 export class ParityStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -34,9 +37,8 @@ export class ParityStack extends cdk.Stack {
 
     new Projector(this, 'Projector', {
       queue: pipeline.queue,
-      cluster: ledger.cluster,
-      databaseName: ledger.databaseName,
       archiveBucket: ledger.archiveBucket,
+      ledgerClusterId: LEDGER_CLUSTER_ID,
     });
 
     new cdk.CfnOutput(this, 'WebhookUrl', {
@@ -59,18 +61,11 @@ export class ParityStack extends cdk.Stack {
       description: 'One row per Stripe event id',
     });
 
-    new cdk.CfnOutput(this, 'LedgerClusterArn', {
-      value: ledger.cluster.clusterArn,
-      description: 'RDS Data API resource ARN for the ledger cluster',
-    });
-
-    new cdk.CfnOutput(this, 'LedgerSecretArn', {
-      value: ledger.cluster.secret!.secretArn,
-      description: 'Secrets Manager ARN the Data API uses to authenticate',
-    });
-
-    new cdk.CfnOutput(this, 'LedgerDatabaseName', {
-      value: ledger.databaseName,
+    new cdk.CfnOutput(this, 'LedgerClusterId', {
+      value: LEDGER_CLUSTER_ID,
+      description:
+        'Provisioned by scripts/create-ledger-cluster.sh, not this stack — see docs/adr/0002. ' +
+        'Its ARN, Data API secret, and database name live in SSM under /parity/ledger/*',
     });
 
     new cdk.CfnOutput(this, 'ArchiveBucketName', {

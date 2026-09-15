@@ -7,12 +7,37 @@ import {
   RollbackTransactionCommand,
   type SqlParameter,
 } from '@aws-sdk/client-rds-data';
+import { getSecret } from './secrets';
 
 const client = new RDSDataClient({});
 
-const RESOURCE_ARN = process.env.LEDGER_CLUSTER_ARN!;
-const SECRET_ARN = process.env.LEDGER_SECRET_ARN!;
-const DATABASE = process.env.LEDGER_DATABASE!;
+// These env vars hold SSM *paths*, not values — the cluster isn't a CDK
+// resource (see lib/constructs/ledger.ts), so its ARN and Data API secret
+// aren't known until scripts/create-ledger-cluster.sh writes them to SSM.
+// Resolved once per execution environment, same caching as Stripe secrets.
+const CLUSTER_ARN_PARAM = process.env.LEDGER_CLUSTER_ARN_PARAM!;
+const SECRET_ARN_PARAM = process.env.LEDGER_SECRET_ARN_PARAM!;
+const DATABASE_PARAM = process.env.LEDGER_DATABASE_PARAM!;
+
+interface Identity {
+  readonly resourceArn: string;
+  readonly secretArn: string;
+  readonly database: string;
+}
+
+let identity: Identity | undefined;
+
+async function resolveIdentity(): Promise<Identity> {
+  if (!identity) {
+    const [resourceArn, secretArn, database] = await Promise.all([
+      getSecret(CLUSTER_ARN_PARAM),
+      getSecret(SECRET_ARN_PARAM),
+      getSecret(DATABASE_PARAM),
+    ]);
+    identity = { resourceArn, secretArn, database };
+  }
+  return identity;
+}
 
 export type SqlValue = string | number | bigint | boolean | null;
 
@@ -42,11 +67,12 @@ export async function execute(
   parameters: SqlParameter[] = [],
   transactionId?: string,
 ): Promise<ExecuteResult> {
+  const { resourceArn, secretArn, database } = await resolveIdentity();
   const result = await client.send(
     new ExecuteStatementCommand({
-      resourceArn: RESOURCE_ARN,
-      secretArn: SECRET_ARN,
-      database: DATABASE,
+      resourceArn,
+      secretArn,
+      database,
       sql,
       parameters,
       transactionId,
@@ -64,9 +90,9 @@ export async function execute(
  * not at execute() — and this is the only place that failure can surface.
  */
 export async function withTransaction<T>(fn: (transactionId: string) => Promise<T>): Promise<T> {
-  const begin = await client.send(
-    new BeginTransactionCommand({ resourceArn: RESOURCE_ARN, secretArn: SECRET_ARN, database: DATABASE }),
-  );
+  const { resourceArn, secretArn, database } = await resolveIdentity();
+
+  const begin = await client.send(new BeginTransactionCommand({ resourceArn, secretArn, database }));
   const transactionId = begin.transactionId;
   if (!transactionId) throw new Error('BeginTransaction returned no transactionId');
 
@@ -74,27 +100,25 @@ export async function withTransaction<T>(fn: (transactionId: string) => Promise<
   try {
     result = await fn(transactionId);
   } catch (err) {
-    await rollback(transactionId);
+    await rollback(resourceArn, secretArn, transactionId);
     throw err;
   }
 
   try {
-    await client.send(
-      new CommitTransactionCommand({ resourceArn: RESOURCE_ARN, secretArn: SECRET_ARN, transactionId }),
-    );
+    await client.send(new CommitTransactionCommand({ resourceArn, secretArn, transactionId }));
   } catch (err) {
-    await rollback(transactionId);
+    await rollback(resourceArn, secretArn, transactionId);
     throw err;
   }
 
   return result;
 }
 
-async function rollback(transactionId: string): Promise<void> {
+async function rollback(resourceArn: string, secretArn: string, transactionId: string): Promise<void> {
   // Best-effort: if commit already failed, Postgres has typically already
   // aborted the transaction server-side and this may itself error — that's
   // fine, the original failure is what the caller needs to see.
   await client
-    .send(new RollbackTransactionCommand({ resourceArn: RESOURCE_ARN, secretArn: SECRET_ARN, transactionId }))
+    .send(new RollbackTransactionCommand({ resourceArn, secretArn, transactionId }))
     .catch(() => {});
 }

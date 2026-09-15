@@ -8,29 +8,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
-PROFILE="${PARITY_PROFILE:-parity}"
-REGION="${PARITY_REGION:-ap-south-1}"
-STACK="${PARITY_STACK:-ParityStack}"
+export LEDGER_CLUSTER_ARN_PARAM="/parity/ledger/cluster-arn"
+export LEDGER_SECRET_ARN_PARAM="/parity/ledger/secret-arn"
+export LEDGER_DATABASE_PARAM="/parity/ledger/database-name"
+export AWS_PROFILE="${PARITY_PROFILE:-parity}"
+export AWS_REGION="${PARITY_REGION:-ap-south-1}"
 
-output() {
-  aws cloudformation describe-stacks \
-    --stack-name "$STACK" --profile "$PROFILE" --region "$REGION" \
-    --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text
-}
-
-export LEDGER_CLUSTER_ARN
-export LEDGER_SECRET_ARN
-export LEDGER_DATABASE
-export AWS_PROFILE="$PROFILE"
-export AWS_REGION="$REGION"
-
-LEDGER_CLUSTER_ARN="$(output LedgerClusterArn)"
-LEDGER_SECRET_ARN="$(output LedgerSecretArn)"
-LEDGER_DATABASE="$(output LedgerDatabaseName)"
-
-if [[ -z "$LEDGER_CLUSTER_ARN" || "$LEDGER_CLUSTER_ARN" == "None" ]]; then
-  echo "could not read LedgerClusterArn from stack $STACK — is it deployed?" >&2
-  exit 1
-fi
+aws ssm get-parameter --name "$LEDGER_CLUSTER_ARN_PARAM" \
+  --profile "$AWS_PROFILE" --region "$AWS_REGION" >/dev/null 2>&1 \
+  || { echo "no cluster recorded at $LEDGER_CLUSTER_ARN_PARAM — run: npm run create-ledger-cluster" >&2; exit 1; }
 
 npx ts-node --prefer-ts-exts scripts/test-balance-constraint.ts
