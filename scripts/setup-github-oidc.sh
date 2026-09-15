@@ -26,9 +26,20 @@ GH_REPO="${PARITY_GH_REPO:-Nishant333-stack/Parity}"
 ROLE_NAME="parity-github-actions-deploy"
 POLICY_NAME="parity-github-actions-deploy-policy"
 OIDC_URL="token.actions.githubusercontent.com"
-# GitHub's OIDC thumbprints — AWS no longer validates these against the live
-# endpoint for well-known providers, but the API still requires the field.
-THUMBPRINTS="6938fd4d98bab03faadb97b34396831e3780aea 1c58a3a8518e8759bf075b76b750d4f2df264fcd"
+# The API requires a thumbprint even though AWS doesn't actually validate it
+# against the live endpoint for well-known providers like GitHub (it verifies
+# the certificate through its own trusted-CA bundle instead) — computed fresh
+# from the top of token.actions.githubusercontent.com's current chain rather
+# than hand-typed from memory, since a wrong-length value is rejected outright.
+THUMBPRINT="$(echo | openssl s_client -servername "$OIDC_URL" -showcerts -connect "${OIDC_URL}:443" 2>/dev/null \
+  | python3 -c '
+import re, sys
+data = sys.stdin.read()
+certs = re.findall(r"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----", data, re.S)
+print(certs[-1], end="")
+' | openssl x509 -fingerprint -sha1 -noout | sed -E 's/.*Fingerprint=//; s/://g' | tr 'A-F' 'a-f')"
+
+[[ ${#THUMBPRINT} -eq 40 ]] || { echo "could not compute a valid thumbprint" >&2; exit 1; }
 
 bold=$'\033[1m'; off=$'\033[0m'
 step() { printf '\n%s==> %s%s\n' "$bold" "$1" "$off"; }
@@ -44,7 +55,7 @@ else
   aws iam create-open-id-connect-provider \
     --url "https://${OIDC_URL}" \
     --client-id-list "sts.amazonaws.com" \
-    --thumbprint-list $THUMBPRINTS \
+    --thumbprint-list "$THUMBPRINT" \
     --profile "$PROFILE" >/dev/null
   echo "created: $PROVIDER_ARN"
 fi
@@ -73,7 +84,7 @@ if aws iam get-role --role-name "$ROLE_NAME" --profile "$PROFILE" >/dev/null 2>&
 else
   aws iam create-role --role-name "$ROLE_NAME" \
     --assume-role-policy-document "$TRUST_POLICY" \
-    --description "GitHub Actions deploy role for Nishant333-stack/Parity — scoped, not admin" \
+    --description "GitHub Actions deploy role for Nishant333-stack/Parity - scoped, not admin" \
     --profile "$PROFILE" >/dev/null
   echo "created role"
 fi
