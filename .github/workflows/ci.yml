@@ -27,5 +27,8 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Unit tests
+        run: npm test
+
       - name: Verify synthesized template
         run: npm run verify:template

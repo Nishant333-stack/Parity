@@ -5,6 +5,7 @@
 // Shared by scripts/dashboard-snapshot.ts (CLI) and src/handlers/dashboard.ts
 // (the public dashboard's API route) — one implementation, not two that can
 // drift apart.
+import { CloudWatchClient, GetMetricStatisticsCommand } from '@aws-sdk/client-cloudwatch';
 import { CloudWatchLogsClient, FilterLogEventsCommand } from '@aws-sdk/client-cloudwatch-logs';
 import { DescribeTableCommand, DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DescribeDBClustersCommand, RDSClient } from '@aws-sdk/client-rds';
@@ -18,6 +19,7 @@ export const ALLOWED_WINDOW_MINUTES = [15, 60, 360, 1440] as const;
 const DEFAULT_TXN_LIMIT = 10;
 const MAX_TXN_LIMIT = 100;
 
+const cloudwatch = new CloudWatchClient({ region: REGION });
 const logs = new CloudWatchLogsClient({ region: REGION });
 const dynamo = new DynamoDBClient({ region: REGION });
 const rds = new RDSClient({ region: REGION });
@@ -40,6 +42,7 @@ export interface SystemSnapshot {
     readonly alreadyProcessed: number;
     readonly noEntries: number;
     readonly failed: number;
+    readonly latency: { readonly p50Ms: number | null; readonly p99Ms: number | null };
   };
   readonly dedupe: {
     readonly approxItemCount: number;
@@ -97,15 +100,43 @@ async function ingressActivity(sinceMs: number): Promise<SystemSnapshot['ingress
   return { received, duplicate, rejectedSignature: rejectedSig, rejectedLivemode: rejectedLive, errors: errors500 };
 }
 
-async function projectorActivity(sinceMs: number): Promise<SystemSnapshot['projector']> {
+/**
+ * p50/p99 of Parity/Projector's IngestToLedgerLatencyMs over the same
+ * window the rest of the snapshot uses — one aggregated CloudWatch
+ * datapoint (Period = the whole window), not a time series, since the
+ * dashboard shows "how fast is processing right now," not a trend chart.
+ */
+async function projectorLatency(sinceMs: number, windowMinutes: number): Promise<SystemSnapshot['projector']['latency']> {
+  const result = await cloudwatch
+    .send(
+      new GetMetricStatisticsCommand({
+        Namespace: 'Parity/Projector',
+        MetricName: 'IngestToLedgerLatencyMs',
+        StartTime: new Date(sinceMs),
+        EndTime: new Date(),
+        Period: windowMinutes * 60,
+        ExtendedStatistics: ['p50', 'p99'],
+      }),
+    )
+    .catch(() => undefined);
+
+  const point = result?.Datapoints?.[0];
+  return {
+    p50Ms: point?.ExtendedStatistics?.p50 ?? null,
+    p99Ms: point?.ExtendedStatistics?.p99 ?? null,
+  };
+}
+
+async function projectorActivity(sinceMs: number, windowMinutes: number): Promise<SystemSnapshot['projector']> {
   const logGroup = '/aws/lambda/parity-ledger-projector';
-  const [projected, alreadyProcessed, noEntries, failed] = await Promise.all([
+  const [projected, alreadyProcessed, noEntries, failed, latency] = await Promise.all([
     countLogPattern(logGroup, '"projected"', sinceMs),
     countLogPattern(logGroup, '"already_processed"', sinceMs),
     countLogPattern(logGroup, '"no_entries"', sinceMs),
     countLogPattern(logGroup, '"project_failed"', sinceMs),
+    projectorLatency(sinceMs, windowMinutes),
   ]);
-  return { projected, alreadyProcessed, noEntries, failed };
+  return { projected, alreadyProcessed, noEntries, failed, latency };
 }
 
 async function dedupeTable(): Promise<SystemSnapshot['dedupe']> {
@@ -222,7 +253,8 @@ export async function getSystemSnapshot(opts: SnapshotOptions = {}): Promise<Sys
     : DEFAULT_WINDOW_MINUTES;
   const txnLimit = Math.min(Math.max(Math.floor(opts.txnLimit ?? DEFAULT_TXN_LIMIT), 1), MAX_TXN_LIMIT);
 
-  const account = process.env.PARITY_ACCOUNT_ID ?? '703091484164';
+  const account = process.env.PARITY_ACCOUNT_ID;
+  if (!account) throw new Error('PARITY_ACCOUNT_ID is not set');
   const queueUrl = `https://sqs.${REGION}.amazonaws.com/${account}/parity-events.fifo`;
   const dlqUrl = `https://sqs.${REGION}.amazonaws.com/${account}/parity-events-dlq.fifo`;
   const archiveBucket = `parity-event-archive-${account}-${REGION}`;
@@ -230,7 +262,7 @@ export async function getSystemSnapshot(opts: SnapshotOptions = {}): Promise<Sys
 
   const [ingress, projector, dedupe, queue, dlq, cluster, ledger, archive] = await Promise.all([
     ingressActivity(sinceMs),
-    projectorActivity(sinceMs),
+    projectorActivity(sinceMs, windowMinutes),
     dedupeTable(),
     queueDepth(queueUrl),
     queueDepth(dlqUrl),

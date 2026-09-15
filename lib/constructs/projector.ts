@@ -121,5 +121,15 @@ export class Projector extends Construct {
     );
 
     props.archiveBucket.grantWrite(this.handler);
+
+    // PutMetricData has no resource-level permissions; the namespace
+    // condition is the actual scope (same pattern as the reconciler's).
+    this.handler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['cloudwatch:PutMetricData'],
+        resources: ['*'],
+        conditions: { StringEquals: { 'cloudwatch:namespace': 'Parity/Projector' } },
+      }),
+    );
   }
 }

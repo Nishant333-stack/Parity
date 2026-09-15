@@ -39,10 +39,12 @@ export interface ReconciliationResult {
  * ledger account here. Compare against `amount`, not `net`, or every run
  * reports "drift" that is actually just unbooked fees.
  *
- * Known gap: `charge.dispute.created` also books to `stripe:cash` (see
- * projection.ts) but its balance-transaction counterpart (type `adjustment`)
- * isn't included here yet. Documented in docs/walkthrough/03-reconciliation.md
- * rather than silently ignored.
+ * `charge.dispute.created` also books to `stripe:cash` (see projection.ts),
+ * and its balance-transaction counterpart is included via
+ * `reporting_category === 'dispute'` — Stripe's own field for exactly this
+ * grouping, and more precise than filtering on `type === 'adjustment'`,
+ * which also covers non-dispute adjustments (e.g. reserve changes) that
+ * project() never books and would introduce phantom drift if summed here.
  *
  * Unbounded: walks the account's entire balance transaction history every
  * run. Fine at this project's volume; a real scale-up would need a
@@ -52,7 +54,7 @@ async function stripeCashTotal(): Promise<number> {
   const stripe = await getStripeClient();
   let total = 0;
   for await (const bt of stripe.balanceTransactions.list({ limit: 100 })) {
-    if (bt.type === 'charge' || bt.type === 'refund') {
+    if (bt.type === 'charge' || bt.type === 'refund' || bt.reporting_category === 'dispute') {
       total += bt.amount;
     }
   }

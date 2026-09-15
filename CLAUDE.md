@@ -13,7 +13,7 @@ you know what it prevents.
 
 | | |
 |---|---|
-| AWS project | `703091484164` |
+| AWS project | see `aws sts get-caller-identity --profile parity` (not committed — this repo is public) |
 | Region | `ap-south-1` — **locked**, cannot be changed |
 | CLI profile | `parity` |
 | Principal | account root (see below) |

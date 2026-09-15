@@ -164,10 +164,13 @@ CloudWatch. That's also the sharpest illustration of what this ADR's opening
 paragraph means: a transaction like that passes the balance constraint (ADR
 0004) perfectly — it's the reconciler, not the database, that catches it.
 
-## Known gap
+## The dispute gap, closed
 
-`charge.dispute.created` books to `stripe:cash` in `src/lib/projection.ts`
-but isn't yet included in `stripeCashTotal()`'s balance-transaction filter
-(disputes land under Stripe's `adjustment` type, whose shape under test-mode
-simulation wasn't reliable enough to commit to on this pass). A live dispute
-will show up as drift until this is extended — see ADR 0005's Consequences.
+`charge.dispute.created` books to `stripe:cash` in `src/lib/projection.ts`.
+`stripeCashTotal()` (`src/lib/reconcile.ts`) sums the matching balance
+transactions by `reporting_category === 'dispute'`, Stripe's own field for
+this grouping — deliberately not `type === 'adjustment'`, which also covers
+adjustments `project()` never books (a reserve change, for instance) and
+would introduce phantom drift if summed here. Verified against this account:
+`stripe trigger charge.dispute.created`, then `npm run reconcile` — see
+ADR 0005's Consequences for the result.

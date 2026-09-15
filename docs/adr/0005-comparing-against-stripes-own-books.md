@@ -113,13 +113,14 @@ whose entire purpose is answering that question.
 
 ## Consequences
 
-- **A known gap, stated rather than hidden:** `charge.dispute.created` books
-  to `stripe:cash` in `project()`, but its balance-transaction counterpart
-  (Stripe's `adjustment` type, whose exact shape under test-mode dispute
-  simulation is unreliable) isn't included in the Stripe-side sum yet. A
-  dispute will show up as drift until this is extended — which is arguably
-  correct behavior for a first version: it's a real gap in what's compared,
-  not a bug hidden by pretending the comparison is complete.
+- **The dispute gap this ADR originally documented is closed.** `charge.dispute.created`
+  books to `stripe:cash` in `project()`; `stripeCashTotal()` now includes the
+  matching balance transactions via `reporting_category === 'dispute'` —
+  Stripe's own field for this grouping, and more precise than the `adjustment`
+  `type` originally considered, which also covers non-dispute adjustments
+  `project()` never books. Verified against this account with
+  `stripe trigger charge.dispute.created`: `npm run reconcile` read `$0.00`
+  drift afterward. See `docs/walkthrough/03-reconciliation.md`.
 - **Unbounded per run.** `stripeCashTotal()` paginates the account's entire
   balance transaction history every hour, and the ledger-side query sums the
   full `entries` table. Fine at this project's volume. A real scale-up needs

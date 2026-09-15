@@ -97,6 +97,23 @@ for (const fn of ['parity-ledger-projector', 'parity-reconciler', 'parity-dashbo
   }
 }
 
+console.log('\nProjector can only publish latency metrics into its own namespace');
+try {
+  template.hasResourceProperties('AWS::IAM::Policy', {
+    PolicyDocument: {
+      Statement: Match.arrayWith([
+        Match.objectLike({
+          Action: 'cloudwatch:PutMetricData',
+          Condition: { StringEquals: { 'cloudwatch:namespace': 'Parity/Projector' } },
+        }),
+      ]),
+    },
+  });
+  pass('projector can only publish metrics into its own namespace');
+} catch (err) {
+  fail(`PutMetricData grant missing or unscoped — ${firstLine(err)}`);
+}
+
 console.log('\nReconciler runs hourly and alarms on nonzero drift');
 try {
   template.hasResourceProperties('AWS::Events::Rule', {
@@ -163,7 +180,7 @@ if (dashboardPolicyIds.length === 0) {
   fail("could not find the dashboard's own IAM policy by logical ID — construct id or naming may have changed");
 } else {
   const dashboardPolicyJson = JSON.stringify(dashboardPolicyIds.map((id) => allPolicies[id]));
-  const forbiddenWrites = ['dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:DeleteItem', 's3:PutObject', 's3:DeleteObject', 'sqs:SendMessage', 'sqs:DeleteMessage'];
+  const forbiddenWrites = ['dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:DeleteItem', 's3:PutObject', 's3:DeleteObject', 'sqs:SendMessage', 'sqs:DeleteMessage', 'cloudwatch:PutMetricData'];
   const foundWrites = forbiddenWrites.filter((action) => dashboardPolicyJson.includes(action));
   if (foundWrites.length === 0) {
     pass("dashboard's own IAM policy grants no write actions");

@@ -350,6 +350,12 @@ export const DASHBOARD_HTML = `<!doctype html>
     return (n / (1024 * 1024)).toFixed(1) + " MB";
   }
 
+  function humanMs(ms) {
+    if (ms === null || ms === undefined) return "—";
+    if (ms < 1000) return Math.round(ms) + "ms";
+    return (ms / 1000).toFixed(1) + "s";
+  }
+
   function relTime(iso) {
     var t = new Date(iso.replace(" ", "T") + (iso.indexOf("Z") === -1 && iso.indexOf("+") === -1 ? "Z" : ""));
     var diff = Math.max(0, (Date.now() - t.getTime()) / 1000);
@@ -520,7 +526,13 @@ export const DASHBOARD_HTML = `<!doctype html>
     grid.appendChild(tile(
       "tile-processing", "Processing", chip(d.projector.failed > 0 ? "critical" : "good", d.projector.failed > 0 ? d.projector.failed + " failed" : "ok"),
       String(d.projector.projected), "posted / " + win,
-      [["already recorded", String(d.projector.alreadyProcessed)], ["no ledger impact", String(d.projector.noEntries)], ["failed", String(d.projector.failed)]]
+      [
+        ["already recorded", String(d.projector.alreadyProcessed)],
+        ["no ledger impact", String(d.projector.noEntries)],
+        ["failed", String(d.projector.failed)],
+        ["typical time to post (p50)", humanMs(d.projector.latency.p50Ms)],
+        ["worst-case time to post (p99)", humanMs(d.projector.latency.p99Ms)],
+      ]
     ));
 
     grid.appendChild(tile(

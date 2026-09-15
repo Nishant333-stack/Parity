@@ -130,6 +130,15 @@ export class Dashboard extends Construct {
       }),
     );
 
+    // GetMetricStatistics has no resource-level permissions either — same
+    // shape as the projector's/reconciler's PutMetricData grants, read side.
+    this.handler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['cloudwatch:GetMetricStatistics'],
+        resources: ['*'],
+      }),
+    );
+
     this.handler.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ['logs:FilterLogEvents'],

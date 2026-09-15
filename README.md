@@ -30,7 +30,7 @@ types at all. See `docs/adr/0005-comparing-against-stripes-own-books.md`.
 
 | | |
 |---|---|
-| AWS project | 703091484164 |
+| AWS project | single-account, `ap-south-1` — see `aws sts get-caller-identity` |
 | Region | `ap-south-1` — **locked**, derived from the account contact address |
 | CLI profile | `parity` |
 | Aurora engine | PostgreSQL, Express Configuration (version not pinnable — see ADR 0002) |
