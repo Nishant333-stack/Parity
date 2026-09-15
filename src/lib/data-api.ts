@@ -57,6 +57,20 @@ export function param(name: string, value: SqlValue): SqlParameter {
   return { name, value: toField(value) };
 }
 
+/**
+ * Postgres's SUM(bigint) returns numeric, not bigint (bigint could overflow
+ * on a huge sum), and the Data API serializes numeric as stringValue, not
+ * longValue — reading only longValue silently produces 0 for every summed
+ * column instead of erroring. Normalizes across long/double/numeric-as-string.
+ */
+export function numeric(field: Field | undefined): number {
+  if (!field) return 0;
+  if (field.longValue !== undefined) return field.longValue;
+  if (field.doubleValue !== undefined) return field.doubleValue;
+  if (field.stringValue !== undefined) return Number(field.stringValue);
+  return 0;
+}
+
 export interface ExecuteResult {
   readonly records?: Field[][];
   readonly numberOfRecordsUpdated?: number;

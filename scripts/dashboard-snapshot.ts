@@ -17,20 +17,7 @@ import { DescribeTableCommand, DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DescribeDBClustersCommand, RDSClient } from '@aws-sdk/client-rds';
 import { ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3';
 import { GetQueueAttributesCommand, SQSClient } from '@aws-sdk/client-sqs';
-import type { Field } from '@aws-sdk/client-rds-data';
-import { execute } from '../src/lib/data-api';
-
-// Postgres's SUM(bigint) returns numeric, not bigint (bigint could overflow
-// on a huge sum), and the Data API serializes numeric as stringValue, not
-// longValue — reading only longValue silently produces 0 for every summed
-// column. This normalizes across long/double/numeric-as-string.
-function numeric(field: Field | undefined): number {
-  if (!field) return 0;
-  if (field.longValue !== undefined) return field.longValue;
-  if (field.doubleValue !== undefined) return field.doubleValue;
-  if (field.stringValue !== undefined) return Number(field.stringValue);
-  return 0;
-}
+import { execute, numeric } from '../src/lib/data-api';
 
 const REGION = process.env.AWS_REGION ?? 'ap-south-1';
 const WINDOW_MINUTES = 15;

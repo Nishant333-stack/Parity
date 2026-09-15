@@ -21,9 +21,12 @@
     "rebuild-ledger": "bash scripts/rebuild-ledger.sh",
     "logs": "aws logs tail /aws/lambda/parity-webhook-ingress --follow --profile parity --region ap-south-1",
     "logs:projector": "aws logs tail /aws/lambda/parity-ledger-projector --follow --profile parity --region ap-south-1",
-    "dashboard:snapshot": "bash scripts/dashboard-snapshot.sh"
+    "dashboard:snapshot": "bash scripts/dashboard-snapshot.sh",
+    "reconcile": "bash scripts/reconcile-once.sh",
+    "logs:reconciler": "aws logs tail /aws/lambda/parity-reconciler --follow --profile parity --region ap-south-1"
   },
   "dependencies": {
+    "@aws-sdk/client-cloudwatch": "^3.700.0",
     "@aws-sdk/client-cloudwatch-logs": "^3.700.0",
     "@aws-sdk/client-dynamodb": "^3.700.0",
     "@aws-sdk/client-rds": "^3.700.0",

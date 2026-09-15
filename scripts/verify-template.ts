@@ -84,15 +84,51 @@ try {
   fail(`secretsmanager IAM grant missing — ${firstLine(err)}`);
 }
 
-console.log('\n7-day log retention still applies to the new function');
+console.log('\n7-day log retention still applies to every function');
+for (const fn of ['parity-ledger-projector', 'parity-reconciler']) {
+  try {
+    template.hasResourceProperties('AWS::Logs::LogGroup', {
+      LogGroupName: `/aws/lambda/${fn}`,
+      RetentionInDays: 7,
+    });
+    pass(`${fn} log group retained 7 days`);
+  } catch (err) {
+    fail(`${fn} log group retention is wrong — ${firstLine(err)}`);
+  }
+}
+
+console.log('\nReconciler runs hourly and alarms on nonzero drift');
 try {
-  template.hasResourceProperties('AWS::Logs::LogGroup', {
-    LogGroupName: '/aws/lambda/parity-ledger-projector',
-    RetentionInDays: 7,
+  template.hasResourceProperties('AWS::Events::Rule', {
+    ScheduleExpression: 'rate(1 hour)',
   });
-  pass('parity-ledger-projector log group retained 7 days');
+  pass('EventBridge rule schedules the reconciler hourly');
 } catch (err) {
-  fail(`projector log group retention is wrong — ${firstLine(err)}`);
+  fail(`hourly schedule missing or wrong — ${firstLine(err)}`);
+}
+try {
+  template.hasResourceProperties('AWS::CloudWatch::Alarm', {
+    ComparisonOperator: 'GreaterThanThreshold',
+    Threshold: 0,
+  });
+  pass('CloudWatch alarm fires on nonzero |drift|');
+} catch (err) {
+  fail(`drift alarm missing or misconfigured — ${firstLine(err)}`);
+}
+try {
+  template.hasResourceProperties('AWS::IAM::Policy', {
+    PolicyDocument: {
+      Statement: Match.arrayWith([
+        Match.objectLike({
+          Action: 'cloudwatch:PutMetricData',
+          Condition: { StringEquals: { 'cloudwatch:namespace': 'Parity/Reconciler' } },
+        }),
+      ]),
+    },
+  });
+  pass('reconciler can only publish metrics into its own namespace');
+} catch (err) {
+  fail(`PutMetricData grant missing or unscoped — ${firstLine(err)}`);
 }
 
 console.log();

@@ -154,6 +154,17 @@ Lambda runtime, whose bundled package set varies by version.
   deliveries fail verification, intermittently. `npm run setup` collapses to one.
 - zsh mangles multi-line pastes containing `#` comments. Prefer single-line
   commands or a script.
+- A corrupted or truncated Stripe *secret key* in SSM (`/parity/stripe/secret-key`)
+  produces no symptom in `npm run verify` — signature verification only needs
+  the webhook *signing* secret and never calls Stripe's API. It only breaks
+  the first thing that actually calls the API with it, which for this
+  project was Week 5's reconciler (`Invalid API Key provided: <3 chars>`).
+  Re-store with `npm run secret /parity/stripe/secret-key`.
+- `/v2/core/events` is not a mirror of v1 activity. Checked directly against
+  this account: it returned an empty list even after real `charge.succeeded`
+  traffic. It's a separate stream for v2-native resources (Money Management,
+  Issuing). The reconciler's backfill uses `/v1/events` instead — see
+  `docs/adr/0005`.
 
 ## Division of labour
 

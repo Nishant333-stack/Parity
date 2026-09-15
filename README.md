@@ -14,12 +14,16 @@ real money. Live-mode events are refused at the ingress by design.
 
 ## Status
 
-**Weeks 1–3 — ingestion and the ledger.** The webhook round-trip, exactly-once
-ingestion onto an ordered queue, and a double-entry ledger projected from it —
-balanced by a database constraint, idempotent by Stripe event id, rebuildable
-from an S3 archive.
+**Weeks 1–5 — the whole loop.** The webhook round-trip, exactly-once ingestion onto an
+ordered queue, a double-entry ledger projected from it (balanced by a database constraint,
+idempotent by Stripe event id, rebuildable from an S3 archive), and an hourly reconciler
+that sums Stripe's own balance transactions, compares them against the ledger's
+`stripe:cash` account, and alarms on nonzero drift. CI/CD via GitHub Actions, OIDC-deployed,
+no stored AWS credentials.
 
-Not built yet: v2 events (Week 4), reconciliation (Week 5).
+"Week 4" turned out not to be adopting Stripe's v2 events API as originally planned —
+checked directly against this account, `/v2/core/events` doesn't carry this project's event
+types at all. See `docs/adr/0005-comparing-against-stripes-own-books.md`.
 
 ## Environment
 
@@ -129,6 +133,44 @@ curl -i -X POST <WebhookUrl> \
 
 Expect `400 invalid signature`. A forged event must never reach the ledger.
 
+## Putting data in, and watching it land in the ledger
+
+There's no form or API to post transactions directly — the ledger only ever moves in
+response to real (test-mode) Stripe events, which is the whole point (`docs/adr/0004`).
+To generate one:
+
+```bash
+stripe trigger charge.succeeded          # books +amount to stripe:cash, -amount to merchants:payable
+stripe trigger charge.refunded           # reverses a prior charge
+stripe trigger charge.dispute.created    # moves funds from stripe:cash to disputes:held
+```
+
+`payment_intent.*` events are also accepted but book nothing — see `src/lib/projection.ts`.
+Every trigger takes 10-20 seconds to land: ingress → FIFO queue → projector → Postgres.
+
+**To watch it land**, pick whichever fits what you're doing:
+
+```bash
+npm run logs:projector                   # tail the projector — "projected"/"no_entries"/"already_processed"
+npm run dashboard:snapshot               # one JSON snapshot: balances, recent txns, queue/DLQ depth, everything
+npm run reconcile                        # does the ledger still agree with Stripe? (docs/adr/0005)
+```
+
+For the actual rows, the ledger is reachable only through the RDS Data API (there's no psql
+access — see `docs/adr/0002`):
+
+```bash
+CLUSTER_ARN=$(aws ssm get-parameter --name /parity/ledger/cluster-arn --profile parity --region ap-south-1 --query Parameter.Value --output text)
+SECRET_ARN=$(aws ssm get-parameter --name /parity/ledger/secret-arn --profile parity --region ap-south-1 --query Parameter.Value --output text)
+aws rds-data execute-statement --resource-arn "$CLUSTER_ARN" --secret-arn "$SECRET_ARN" --database parity \
+  --sql "SELECT t.event_type, e.account, e.amount_cents, t.created_at FROM transactions t JOIN entries e ON e.txn_id = t.id ORDER BY t.created_at DESC LIMIT 20" \
+  --profile parity --region ap-south-1
+```
+
+There's also a live dashboard (an Artifact, not part of this repo) that renders balances,
+recent transactions, and system health with auto-refresh — ask your Claude Code session for
+the link if you've lost it, or regenerate one with the `dashboard-snapshot.ts` data.
+
 ## Layout
 
 ```
@@ -139,22 +181,28 @@ lib/constructs/webhook-ingress.ts    HTTP API + verifying Lambda
 lib/constructs/event-pipeline.ts     dedupe table + FIFO queue + DLQ
 lib/constructs/ledger.ts             S3 event archive (the cluster is NOT here — see ADR 0002)
 lib/constructs/projector.ts          SQS-triggered Lambda that projects into the ledger
+lib/constructs/reconciler.ts         hourly Lambda + EventBridge rule + CloudWatch alarm
 src/handlers/webhook.ts              signature verification, livemode guard
 src/handlers/projector.ts            archive + apply each event, report partial batch failures
+src/handlers/reconciler.ts           recover stranded claims, measure drift, publish the metric
 src/lib/secrets.ts                   cached SSM SecureString/String reads
 src/lib/data-api.ts                  RDS Data API client, resolves ledger identity from SSM
+src/lib/stripe-client.ts             cached Stripe API client (v1 — see ADR 0005)
 src/lib/projection.ts                Stripe event → journal entries
-src/lib/apply-event.ts               idempotent apply, shared by the projector and rebuild
+src/lib/apply-event.ts               idempotent apply, shared by the projector and reconciler
+src/lib/reconcile.ts                 stranded-claim backfill + drift computation
 src/lib/archive.ts                   batched raw-event writes to S3
 db/schema.sql                        transactions/entries/processed_events + balance trigger
 scripts/create-ledger-cluster.sh     provisions the Express Configuration cluster (not CDK)
 scripts/migrate.ts                   applies db/schema.sql via the Data API
 scripts/test-balance-constraint.ts   the central claim: unbalanced entries are rejected
+scripts/reconcile-once.ts            run one reconciliation pass on demand
 scripts/rebuild-ledger.ts            replays the S3 archive through apply-event.ts
+scripts/dashboard-snapshot.ts        JSON snapshot of the whole system (feeds the live dashboard)
 scripts/verify-template.ts           synthesized-template assertions (no VPC, no NAT gateway)
-scripts/setup-github-oidc.sh         provisions the GitHub Actions OIDC provider + deploy role
+scripts/setup-github-oidc.sh         provisions the GitHub Actions OIDC provider + deploy roles
 .github/workflows/ci.yml             typecheck + verify:template on every push/PR
-.github/workflows/deploy.yml         manual (workflow_dispatch) cdk deploy via OIDC
+.github/workflows/deploy.yml         auto-deploy on push to main, or manual (workflow_dispatch)
 ```
 
 ## CI/CD
@@ -204,7 +252,17 @@ that worked yesterday. Check billing before debugging code.
 
 ## Notes
 
-`stripe-node` is pinned to a major range. Week 4 introduces the v2 API surface
-(`/v2/core/events`, thin events); run `npm outdated stripe` then, since v2 support tracks
-recent majors. Also confirm `money_management/financial_accounts` is enabled on the
-account — it may need explicit activation.
+`stripe-node` stayed on its pinned major (17.x) through Week 5, not bumped as originally
+planned — `/v2/core/events` turned out not to carry this project's event types at all
+(confirmed empty against this account after real traffic; see `docs/adr/0005`), and the v1
+methods the reconciler needs (`balanceTransactions.list`, `events.retrieve`) were already
+available. `money_management/financial_accounts` activation is accordingly moot for this
+project unless a future week actually adopts v2-native resources.
+
+**The Stripe secret key (`/parity/stripe/secret-key`) can silently be wrong for a long
+time.** Signature verification (`stripe.webhooks.constructEvent`) only needs the *webhook
+signing secret* — it never calls Stripe's API, so a corrupted or truncated secret key won't
+break `npm run verify`. It only surfaces the first time something calls the Stripe API for
+real, which on this project was the reconciler. If `npm run reconcile` fails with
+`Invalid API Key provided`, re-store it: `npm run secret /parity/stripe/secret-key`
+(interactive, hidden input — never paste a key into a command's arguments or a chat).

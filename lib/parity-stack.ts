@@ -3,6 +3,7 @@ import { Construct } from 'constructs';
 import { EventPipeline } from './constructs/event-pipeline';
 import { Ledger } from './constructs/ledger';
 import { Projector } from './constructs/projector';
+import { Reconciler } from './constructs/reconciler';
 import { WebhookIngress } from './constructs/webhook-ingress';
 
 /**
@@ -41,6 +42,12 @@ export class ParityStack extends cdk.Stack {
       ledgerClusterId: LEDGER_CLUSTER_ID,
     });
 
+    const reconciler = new Reconciler(this, 'Reconciler', {
+      dedupeTable: pipeline.dedupeTable,
+      ledgerClusterId: LEDGER_CLUSTER_ID,
+      stripeSecretKeyParam: SSM_PATHS.stripeSecretKey,
+    });
+
     new cdk.CfnOutput(this, 'WebhookUrl', {
       value: ingress.webhookUrl,
       description: 'Point the Stripe webhook endpoint at this URL',
@@ -71,6 +78,11 @@ export class ParityStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'ArchiveBucketName', {
       value: ledger.archiveBucket.bucketName,
       description: 'Raw Stripe event archive — Athena and rebuild-from-archive read from here',
+    });
+
+    new cdk.CfnOutput(this, 'ReconcilerDriftAlarmTopicArn', {
+      value: reconciler.alarmTopic.topicArn,
+      description: 'Subscribe an email/endpoint to get notified when the ledger drifts from Stripe',
     });
   }
 }

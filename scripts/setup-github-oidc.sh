@@ -225,6 +225,7 @@ EXEC_POLICY="$(cat <<JSON
       "Resource": [
         "arn:aws:lambda:${REGION}:${ACCOUNT_ID}:function:parity-webhook-ingress",
         "arn:aws:lambda:${REGION}:${ACCOUNT_ID}:function:parity-ledger-projector",
+        "arn:aws:lambda:${REGION}:${ACCOUNT_ID}:function:parity-reconciler",
         "arn:aws:lambda:${REGION}:${ACCOUNT_ID}:function:ParityStack-*"
       ]
     },
@@ -251,6 +252,28 @@ EXEC_POLICY="$(cat <<JSON
         "arn:aws:sqs:${REGION}:${ACCOUNT_ID}:parity-events.fifo",
         "arn:aws:sqs:${REGION}:${ACCOUNT_ID}:parity-events-dlq.fifo"
       ]
+    },
+    {
+      "Sid": "ReconcilerSchedule",
+      "Effect": "Allow",
+      "Action": [
+        "events:PutRule", "events:DeleteRule", "events:DescribeRule",
+        "events:PutTargets", "events:RemoveTargets", "events:ListTargetsByRule",
+        "events:TagResource", "events:UntagResource", "events:ListTagsForResource"
+      ],
+      "Resource": "arn:aws:events:${REGION}:${ACCOUNT_ID}:rule/parity-reconciler-hourly"
+    },
+    {
+      "Sid": "DriftAlarm",
+      "Effect": "Allow",
+      "Action": ["cloudwatch:PutMetricAlarm", "cloudwatch:DeleteAlarms", "cloudwatch:DescribeAlarms", "cloudwatch:TagResource"],
+      "Resource": "arn:aws:cloudwatch:${REGION}:${ACCOUNT_ID}:alarm:parity-ledger-drift"
+    },
+    {
+      "Sid": "DriftAlarmTopic",
+      "Effect": "Allow",
+      "Action": ["sns:CreateTopic", "sns:DeleteTopic", "sns:SetTopicAttributes", "sns:GetTopicAttributes", "sns:TagResource"],
+      "Resource": "arn:aws:sns:${REGION}:${ACCOUNT_ID}:parity-reconciler-drift"
     },
     {
       "Sid": "ApiGateway",
