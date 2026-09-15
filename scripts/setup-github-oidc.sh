@@ -286,6 +286,12 @@ EXEC_POLICY="$(cat <<JSON
       "Effect": "Allow",
       "Action": ["cloudformation:DescribeStacks", "cloudformation:DescribeStackEvents", "cloudformation:GetTemplate"],
       "Resource": "arn:aws:cloudformation:${REGION}:${ACCOUNT_ID}:stack/ParityStack/*"
+    },
+    {
+      "Sid": "CdkBootstrapVersionCheck",
+      "Effect": "Allow",
+      "Action": ["ssm:GetParameter", "ssm:GetParameters"],
+      "Resource": "arn:aws:ssm:${REGION}:${ACCOUNT_ID}:parameter/cdk-bootstrap/*"
     }
   ]
 }
