@@ -18,7 +18,7 @@ async function main(): Promise<void> {
   console.log('Reconciling against Stripe’s own balance transactions...\n');
   const result = await reconcile();
 
-  console.log(`  Stripe balance transactions (charge + refund): ${money(result.stripeCashCents)}`);
+  console.log(`  Stripe balance transactions (charge/refund/dispute/payout): ${money(result.stripeCashCents)}`);
   console.log(`  Ledger stripe:cash account:                    ${money(result.ledgerCashCents)}`);
   console.log(`  Drift:                                         ${money(result.driftCents)}`);
   console.log();

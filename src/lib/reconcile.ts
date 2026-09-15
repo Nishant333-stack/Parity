@@ -18,7 +18,13 @@ const DEDUPE_TABLE = process.env.DEDUPE_TABLE!;
 const STRANDED_THRESHOLD_MS = 15 * 60 * 1000;
 
 /** Event types project() books, and therefore the only ones worth diffing against Stripe. */
-const LEDGER_EVENT_TYPES = ['charge.succeeded', 'charge.refunded', 'charge.dispute.created'] as const;
+const LEDGER_EVENT_TYPES = [
+  'charge.succeeded',
+  'charge.refunded',
+  'charge.dispute.funds_withdrawn',
+  'charge.dispute.funds_reinstated',
+  'payout.paid',
+] as const;
 
 export interface ReconciliationResult {
   readonly stripeCashCents: number;
@@ -46,6 +52,11 @@ export interface ReconciliationResult {
  * which also covers non-dispute adjustments (e.g. reserve changes) that
  * project() never books and would introduce phantom drift if summed here.
  *
+ * `payout.paid` (docs/adr/0008) also books to `stripe:cash`, and its
+ * balance-transaction counterpart is `type === 'payout'` — already signed
+ * negative by Stripe, so it combines correctly with the charge/refund/dispute
+ * sum above with no special-casing.
+ *
  * Unbounded: walks the account's entire balance transaction history every
  * run. Fine at this project's volume; a real scale-up would need a
  * checkpointed, incremental version instead.
@@ -54,7 +65,7 @@ async function stripeCashTotal(): Promise<number> {
   const stripe = await getStripeClient();
   let total = 0;
   for await (const bt of stripe.balanceTransactions.list({ limit: 100 })) {
-    if (bt.type === 'charge' || bt.type === 'refund' || bt.reporting_category === 'dispute') {
+    if (bt.type === 'charge' || bt.type === 'refund' || bt.type === 'payout' || bt.reporting_category === 'dispute') {
       total += bt.amount;
     }
   }

@@ -24,7 +24,16 @@ import { getSecret } from '../src/lib/secrets';
 const STACK = process.env.PARITY_STACK ?? 'ParityStack';
 const DEDUPE_TABLE = process.env.DEDUPE_TABLE ?? 'parity-event-dedupe';
 const WEBHOOK_SECRET_PARAM = process.env.STRIPE_WEBHOOK_SECRET_PARAM ?? '/parity/stripe/webhook-secret';
-const CONCURRENCY = Number(process.env.CHAOS_CONCURRENCY ?? 40);
+// Default kept comfortably under this account's actual Lambda concurrency
+// ceiling — checked directly (`aws lambda get-account-settings`): this free
+// plan account allows 10 *unreserved* concurrent executions **total, across
+// every function in the region**, not the usual default of 1000. The first
+// version of this script defaulted to 40 and got a real, honest result: 30
+// of 40 requests came back 503 (capacity, not a dedupe bug — the one that
+// did get claimed was still correctly the only one). Documented in
+// CLAUDE.md's Known noise. Override with CHAOS_CONCURRENCY to reproduce
+// that against a higher-concurrency account.
+const CONCURRENCY = Number(process.env.CHAOS_CONCURRENCY ?? 8);
 
 const cfn = new CloudFormationClient({});
 const dynamo = DynamoDBDocumentClient.from(new DynamoDBClient({}));
@@ -47,18 +56,33 @@ async function webhookUrl(): Promise<string> {
   return url;
 }
 
-async function post(url: string, body: string, signature: string): Promise<{ status: number; duplicate: boolean }> {
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'stripe-signature': signature },
-    body,
-  });
-  const json = (await response.json().catch(() => ({}))) as { duplicate?: boolean };
-  return { status: response.status, duplicate: json.duplicate === true };
-}
-
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * A 503 here means "no Lambda execution slot was available," not "the
+ * dedupe logic broke" — exactly the case this account's low concurrency
+ * ceiling produces under a real storm (see the CONCURRENCY comment above).
+ * Stripe itself retries any non-2xx, so retrying here is faithful to how
+ * this system is actually designed to be used, not a test-only workaround.
+ */
+async function post(url: string, body: string, signature: string): Promise<{ status: number; duplicate: boolean }> {
+  let lastStatus = 0;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (attempt > 0) await sleep(300 * attempt);
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'stripe-signature': signature },
+      body,
+    });
+    lastStatus = response.status;
+    if (response.status !== 503) {
+      const json = (await response.json().catch(() => ({}))) as { duplicate?: boolean };
+      return { status: response.status, duplicate: json.duplicate === true };
+    }
+  }
+  return { status: lastStatus, duplicate: false };
 }
 
 async function main(): Promise<void> {

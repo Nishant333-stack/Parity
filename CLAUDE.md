@@ -165,6 +165,14 @@ Lambda runtime, whose bundled package set varies by version.
   traffic. It's a separate stream for v2-native resources (Money Management,
   Issuing). The reconciler's backfill uses `/v1/events` instead — see
   `docs/adr/0005`.
+- This account's Lambda concurrency ceiling is **10**, account-and-region-wide
+  (`aws lambda get-account-settings` → `UnreservedConcurrentExecutions: 10`),
+  not AWS's usual default of 1000. Found by `scripts/chaos-replay-storm.ts`
+  at its original default of 40 concurrent requests: 30 came back 503
+  (capacity, not a dedupe bug — the dedupe invariant itself held throughout).
+  The script's default is now 8, comfortably under the ceiling; a real
+  production account would need a concurrency limit increase before this
+  pipeline could handle real traffic bursts.
 
 ## Division of labour
 

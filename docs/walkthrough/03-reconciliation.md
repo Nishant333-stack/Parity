@@ -164,13 +164,39 @@ CloudWatch. That's also the sharpest illustration of what this ADR's opening
 paragraph means: a transaction like that passes the balance constraint (ADR
 0004) perfectly — it's the reconciler, not the database, that catches it.
 
-## The dispute gap, closed
+## The dispute gap, closed — and a real bug it surfaced along the way
 
-`charge.dispute.created` books to `stripe:cash` in `src/lib/projection.ts`.
 `stripeCashTotal()` (`src/lib/reconcile.ts`) sums the matching balance
 transactions by `reporting_category === 'dispute'`, Stripe's own field for
 this grouping — deliberately not `type === 'adjustment'`, which also covers
 adjustments `project()` never books (a reserve change, for instance) and
-would introduce phantom drift if summed here. Verified against this account:
-`stripe trigger charge.dispute.created`, then `npm run reconcile` — see
-ADR 0005's Consequences for the result.
+would introduce phantom drift if summed here.
+
+Verifying that live — `stripe trigger charge.dispute.created` against this
+account — found something more interesting than a clean pass. The dispute it
+created:
+
+```
+"status": "warning_needs_response",
+"balance_transaction": null,
+"balance_transactions": []
+```
+
+No balance transaction at all: this is an inquiry / early-fraud-warning
+style dispute, and Stripe never withdrew any funds for it. `project()` was,
+at the time, booking a fund hold on `charge.dispute.created` itself — so the
+ledger moved $1.00 into `disputes:held` for a dispute that hadn't actually
+taken any money. `npm run reconcile` briefly reported real drift, but for
+the interesting reason: not because a real balance transaction was missing
+from the sum, but because the *ledger's own booking* was wrong, which is a
+strictly worse class of bug than the drift comparison itself missing
+something. `project()` now books the fund hold on `charge.dispute.funds_withdrawn`
+instead (mirrored by `charge.dispute.funds_reinstated`), and
+`charge.dispute.created` books nothing — see the comment on `project()` in
+`src/lib/projection.ts` and ADR 0005's Consequences.
+
+The ledger was then rebuilt from the S3 archive (`npm run rebuild-ledger -- --yes`)
+to replay every event through the corrected logic — the fastest and most
+honest way to fix a projection bug that had already written wrong entries,
+and a real (not staged) exercise of "Postgres is a rebuildable projection"
+(CLAUDE.md). `npm run reconcile` read `$0.00` afterward.

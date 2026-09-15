@@ -167,7 +167,13 @@ stripe trigger charge.refunded           # reverses a prior charge
 stripe trigger charge.dispute.created    # moves funds from stripe:cash to disputes:held
 ```
 
-`payment_intent.*` events are also accepted but book nothing — see `src/lib/projection.ts`.
+A real `payout.paid` moves funds from `stripe:cash` to `bank:external` — the other side
+of the same balance, see `docs/adr/0008-payouts-the-other-side-of-cash.md` for why it
+isn't in the list above (this sandbox has no external bank account attached, a
+Dashboard-only step Stripe doesn't expose via API for a plain, non-Connect account).
+
+`payment_intent.*` and `payout.failed` events are also accepted but book nothing — see
+`src/lib/projection.ts`.
 Every trigger takes 10-20 seconds to land: ingress → FIFO queue → projector → Postgres.
 
 **To watch it land**, pick whichever fits what you're doing:

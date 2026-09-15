@@ -25,13 +25,43 @@ describe('project', () => {
     ]);
   });
 
-  it('books a charge.dispute.created as held funds, out of cash', () => {
-    const entries = project(eventOf('charge.dispute.created', { amount: 1_500 }));
+  it('books nothing for charge.dispute.created — creation alone does not mean funds moved', () => {
+    // Verified against this account: `stripe trigger charge.dispute.created`
+    // produced a dispute with status "warning_needs_response" and
+    // balance_transaction: null — an inquiry-type dispute Stripe never
+    // actually debited. See the comment on project() and ADR 0005's amendment.
+    expect(project(eventOf('charge.dispute.created', { amount: 1_500 }))).toEqual([]);
+  });
+
+  it('books a charge.dispute.funds_withdrawn as held funds, out of cash', () => {
+    const entries = project(eventOf('charge.dispute.funds_withdrawn', { amount: 1_500 }));
 
     expect(entries).toEqual([
       { account: 'disputes:held', amountCents: 1_500n },
       { account: 'stripe:cash', amountCents: -1_500n },
     ]);
+  });
+
+  it('books a charge.dispute.funds_reinstated as the exact reverse', () => {
+    const entries = project(eventOf('charge.dispute.funds_reinstated', { amount: 1_500 }));
+
+    expect(entries).toEqual([
+      { account: 'stripe:cash', amountCents: 1_500n },
+      { account: 'disputes:held', amountCents: -1_500n },
+    ]);
+  });
+
+  it('books a payout.paid as cash leaving Stripe for the external bank account', () => {
+    const entries = project(eventOf('payout.paid', { amount: 9_539 }));
+
+    expect(entries).toEqual([
+      { account: 'bank:external', amountCents: 9_539n },
+      { account: 'stripe:cash', amountCents: -9_539n },
+    ]);
+  });
+
+  it('books nothing for payout.failed — no cash left the platform to reverse', () => {
+    expect(project(eventOf('payout.failed', { amount: 9_539 }))).toEqual([]);
   });
 
   it('books nothing for payment_intent.* — it would double-count the charge', () => {
@@ -46,7 +76,9 @@ describe('project', () => {
     const cases = [
       eventOf('charge.succeeded', { amount: 999 }),
       eventOf('charge.refunded', { amount_refunded: 999 }),
-      eventOf('charge.dispute.created', { amount: 999 }),
+      eventOf('charge.dispute.funds_withdrawn', { amount: 999 }),
+      eventOf('charge.dispute.funds_reinstated', { amount: 999 }),
+      eventOf('payout.paid', { amount: 999 }),
     ];
 
     for (const event of cases) {

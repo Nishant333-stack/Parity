@@ -113,14 +113,24 @@ whose entire purpose is answering that question.
 
 ## Consequences
 
-- **The dispute gap this ADR originally documented is closed.** `charge.dispute.created`
-  books to `stripe:cash` in `project()`; `stripeCashTotal()` now includes the
+- **The dispute gap this ADR originally documented is closed, and closing it
+  surfaced a second, more important bug this ADR's own opening paragraph
+  predicted almost word for word.** `stripeCashTotal()` now includes the
   matching balance transactions via `reporting_category === 'dispute'` —
-  Stripe's own field for this grouping, and more precise than the `adjustment`
-  `type` originally considered, which also covers non-dispute adjustments
-  `project()` never books. Verified against this account with
-  `stripe trigger charge.dispute.created`: `npm run reconcile` read `$0.00`
-  drift afterward. See `docs/walkthrough/03-reconciliation.md`.
+  Stripe's own field for this grouping, more precise than the `adjustment`
+  `type` originally considered. But verifying it live — `stripe trigger
+  charge.dispute.created` against this account — surfaced that `project()`
+  was booking a fund hold on the **wrong event**: the resulting dispute had
+  `status: "warning_needs_response"` and `balance_transaction: null` — an
+  inquiry-type dispute Stripe never actually debited. `charge.dispute.created`
+  means a dispute record exists, not that money moved; the precise signal is
+  `charge.dispute.funds_withdrawn` (mirrored by `funds_reinstated`), and
+  `project()` now books on those instead — see the comment on `project()`
+  and `docs/walkthrough/03-reconciliation.md`. This is this ADR's own
+  opening line happening for real: *"an event type silently mapped to
+  nothing when it should book something"* — here, inverted: mapped to
+  *something* when it should have booked nothing, found by the same
+  live-verification habit that closed the gap, one paragraph later.
 - **Unbounded per run.** `stripeCashTotal()` paginates the account's entire
   balance transaction history every hour, and the ledger-side query sums the
   full `entries` table. Fine at this project's volume. A real scale-up needs

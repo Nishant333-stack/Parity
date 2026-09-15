@@ -39,15 +39,58 @@ async function listArchiveKeys(): Promise<string[]> {
   return keys;
 }
 
+/**
+ * Splits a blob of concatenated JSON values into one string per value, by
+ * tracking brace/bracket depth and string state rather than assuming one
+ * value per line. archive.ts now always writes true one-per-line NDJSON
+ * (see its comment), but this reads whatever is actually in S3 today,
+ * including objects written before that fix — at least one real archived
+ * event was pretty-printed with embedded newlines, which a naive
+ * `body.split('\n')` silently shreds into invalid fragments. This parses
+ * correctly regardless of the whitespace between or inside values.
+ */
+function splitJsonValues(text: string): string[] {
+  const values: string[] = [];
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  let start = -1;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (start === -1) {
+      if (/\s/.test(ch)) continue;
+      start = i;
+    }
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === '{' || ch === '[') {
+      depth++;
+    } else if (ch === '}' || ch === ']') {
+      depth--;
+      if (depth === 0) {
+        values.push(text.slice(start, i + 1));
+        start = -1;
+      }
+    }
+  }
+  return values;
+}
+
 async function loadEvents(keys: string[]): Promise<Stripe.Event[]> {
   const events: Stripe.Event[] = [];
   for (const key of keys) {
     const obj = await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: key }));
     const body = await obj.Body?.transformToString('utf8');
     if (!body) continue;
-    for (const line of body.split('\n')) {
-      if (line.trim().length === 0) continue;
-      events.push(JSON.parse(line) as Stripe.Event);
+    for (const value of splitJsonValues(body)) {
+      events.push(JSON.parse(value) as Stripe.Event);
     }
   }
   // Best-effort global order. The live projector's real guarantee is
