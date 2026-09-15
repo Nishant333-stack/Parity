@@ -79,7 +79,7 @@ try {
       Statement: Match.arrayWith([Match.objectLike({ Action: 'secretsmanager:GetSecretValue' })]),
     },
   });
-  pass('IAM policy grants secretsmanager:GetSecretValue on rds!cluster-* secrets');
+  pass('IAM policy grants secretsmanager:GetSecretValue on the ledger Data API secret');
 } catch (err) {
   fail(`secretsmanager IAM grant missing — ${firstLine(err)}`);
 }

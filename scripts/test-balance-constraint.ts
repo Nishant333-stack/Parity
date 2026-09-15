@@ -39,8 +39,10 @@ async function insertTransaction(eventId: string, eventType: string, txId: strin
 }
 
 async function insertEntry(txnId: string, account: string, amountCents: bigint, txId: string): Promise<void> {
+  // txn_id is uuid; Data API sends string parameters typed as text, so the
+  // cast to uuid has to be explicit or Postgres rejects the assignment.
   await execute(
-    'INSERT INTO entries (txn_id, account, amount_cents) VALUES (:txnId, :account, :amountCents)',
+    'INSERT INTO entries (txn_id, account, amount_cents) VALUES (:txnId::uuid, :account, :amountCents)',
     [param('txnId', txnId), param('account', account), param('amountCents', amountCents)],
     txId,
   );
@@ -89,8 +91,8 @@ async function testBalancedAccepted(): Promise<void> {
   // removing both entries together still sums to zero.
   if (txnId) {
     await withTransaction(async (txId) => {
-      await execute('DELETE FROM entries WHERE txn_id = :txnId', [param('txnId', txnId!)], txId);
-      await execute('DELETE FROM transactions WHERE id = :txnId', [param('txnId', txnId!)], txId);
+      await execute('DELETE FROM entries WHERE txn_id = :txnId::uuid', [param('txnId', txnId!)], txId);
+      await execute('DELETE FROM transactions WHERE id = :txnId::uuid', [param('txnId', txnId!)], txId);
     });
   }
 }

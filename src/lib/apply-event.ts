@@ -39,15 +39,17 @@ export async function applyEvent(event: Stripe.Event): Promise<ApplyOutcome> {
     }
 
     for (const entry of entries) {
+      // txn_id is uuid; Data API sends string parameters typed as text, and
+      // Postgres won't implicitly cast text to uuid, so the cast is explicit.
       await execute(
-        'INSERT INTO entries (txn_id, account, amount_cents) VALUES (:txnId, :account, :amountCents)',
+        'INSERT INTO entries (txn_id, account, amount_cents) VALUES (:txnId::uuid, :account, :amountCents)',
         [param('txnId', txnId), param('account', entry.account), param('amountCents', entry.amountCents)],
         txId,
       );
     }
 
     await execute(
-      'UPDATE processed_events SET txn_id = :txnId WHERE event_id = :eventId',
+      'UPDATE processed_events SET txn_id = :txnId::uuid WHERE event_id = :eventId',
       [param('txnId', txnId), param('eventId', event.id)],
       txId,
     );

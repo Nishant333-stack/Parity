@@ -108,14 +108,15 @@ export class Projector extends Construct {
     );
 
     // The Data API authenticates to Postgres with this secret on the
-    // caller's behalf. It's an RDS-managed secret (created alongside the
-    // cluster by scripts/create-ledger-cluster.sh), which always follows the
-    // `rds!cluster-*` naming convention — the concrete ARN has a suffix CDK
-    // has no way to know, since the cluster isn't a CDK resource.
+    // caller's behalf. It's a secret scripts/create-ledger-cluster.sh
+    // creates (not an RDS-managed one — the cluster's master user is
+    // IAM-auth-only, so Data API uses a separately bootstrapped DB role
+    // instead); Secrets Manager always appends a random suffix to the ARN,
+    // which CDK has no way to know since the secret isn't a CDK resource.
     this.handler.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ['secretsmanager:GetSecretValue'],
-        resources: [`arn:aws:secretsmanager:${stack.region}:${stack.account}:secret:rds!cluster-*`],
+        resources: [`arn:aws:secretsmanager:${stack.region}:${stack.account}:secret:parity-ledger-data-api-user-*`],
       }),
     );
 
