@@ -146,8 +146,14 @@ aws cloudformation describe-stacks --stack-name ParityStack --profile parity --r
 ```
 
 It shows ledger integrity (the global drift a healthy system always reads $0.00 on),
-per-account balances, recent transactions, queue/DLQ depth, projector activity, and cluster
-health — genuinely live, not dependent on this session or any external push.
+per-account balances, recent transactions, queue/DLQ depth, processing activity, and
+database health — genuinely live, not dependent on this session or any external push.
+
+It's interactive, not just auto-refreshing: a time-range control (15m/1h/6h/24h) actually
+re-queries with a different window, transactions filter by type, a sparkline tracks ledger
+drift for the session, and a manual refresh/pause control sits next to the auto-refresh. The
+copy is deliberately product-voiced — no AWS service names on the page itself, see
+`docs/adr/0006`'s amendment for why.
 
 ## Putting data in, and watching it land in the ledger
 

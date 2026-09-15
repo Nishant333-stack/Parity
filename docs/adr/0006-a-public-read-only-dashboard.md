@@ -56,6 +56,29 @@ no auth was chosen as the simplest option that fits data with this low a
 sensitivity — not the default this project reaches for when the data behind
 an endpoint is anything else.
 
+## Amendment — the copy is product-voiced, not infrastructure-voiced, deliberately
+
+The first version of this dashboard named its own implementation in the UI:
+a tile literally read "engine: Aurora PostgreSQL, reached via: RDS Data API,
+no VPC," another wore an "S3" badge. That's accurate and it's also exactly
+backwards for who reads a dashboard — an operator checking whether the
+ledger agrees with Stripe does not care which AWS service backs it, any
+more than a Stripe user checking their balance cares that Stripe itself
+runs on AWS. The service names belong in the ADRs, where the audience is a
+developer deciding on an implementation; the dashboard's audience is
+someone asking "is everything okay," and every technology name in that
+context reads as the page explaining itself instead of answering the
+question. The rewrite renamed tiles into what they mean operationally
+("Projector" → "Processing", "Dedupe table" → "Duplicate protection") and
+removed every AWS service name from visible copy — `docs/adr` and
+`docs/walkthrough` remain exactly where that detail lives. Interactivity
+(a real time-range control backed by `/api/snapshot?window=`, not a
+decorative filter; transaction filtering; a session-lifetime trend
+sparkline on the one number that matters most) was added at the same time,
+for the same underlying reason: a dashboard that only auto-refreshes is a
+display, not a tool, and it *reads* as generated exactly because nothing on
+it responds to being touched.
+
 ## Consequences
 
 - **Anyone with the URL can see this project's operational internals** —

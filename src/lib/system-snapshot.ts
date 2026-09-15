@@ -13,7 +13,10 @@ import { GetQueueAttributesCommand, SQSClient } from '@aws-sdk/client-sqs';
 import { execute, numeric } from './data-api';
 
 const REGION = process.env.AWS_REGION ?? 'ap-south-1';
-const WINDOW_MINUTES = 15;
+const DEFAULT_WINDOW_MINUTES = 15;
+export const ALLOWED_WINDOW_MINUTES = [15, 60, 360, 1440] as const;
+const DEFAULT_TXN_LIMIT = 10;
+const MAX_TXN_LIMIT = 100;
 
 const logs = new CloudWatchLogsClient({ region: REGION });
 const dynamo = new DynamoDBClient({ region: REGION });
@@ -147,7 +150,7 @@ async function clusterStatus(clusterId: string): Promise<SystemSnapshot['cluster
   };
 }
 
-async function ledgerState(): Promise<SystemSnapshot['ledger']> {
+async function ledgerState(txnLimit: number): Promise<SystemSnapshot['ledger']> {
   const [balances, txnCount, processedCount, recent] = await Promise.all([
     execute('SELECT account, SUM(amount_cents) AS total FROM entries GROUP BY account ORDER BY account'),
     execute('SELECT COUNT(*) AS n FROM transactions'),
@@ -158,7 +161,7 @@ async function ledgerState(): Promise<SystemSnapshot['ledger']> {
        LEFT JOIN entries e ON e.txn_id = t.id
        GROUP BY t.id, t.event_type, t.created_at
        ORDER BY t.created_at DESC
-       LIMIT 10`,
+       LIMIT ${txnLimit}`,
     ),
   ]);
 
@@ -206,12 +209,24 @@ async function archiveState(bucket: string): Promise<SystemSnapshot['archive']> 
   return { objectCount, totalBytes, latestKey };
 }
 
-export async function getSystemSnapshot(): Promise<SystemSnapshot> {
+export interface SnapshotOptions {
+  /** Activity lookback window in minutes, clamped to ALLOWED_WINDOW_MINUTES. */
+  readonly windowMinutes?: number;
+  /** Recent-transaction row count, clamped to [1, MAX_TXN_LIMIT]. */
+  readonly txnLimit?: number;
+}
+
+export async function getSystemSnapshot(opts: SnapshotOptions = {}): Promise<SystemSnapshot> {
+  const windowMinutes = (ALLOWED_WINDOW_MINUTES as readonly number[]).includes(opts.windowMinutes ?? -1)
+    ? (opts.windowMinutes as number)
+    : DEFAULT_WINDOW_MINUTES;
+  const txnLimit = Math.min(Math.max(Math.floor(opts.txnLimit ?? DEFAULT_TXN_LIMIT), 1), MAX_TXN_LIMIT);
+
   const account = process.env.PARITY_ACCOUNT_ID ?? '703091484164';
   const queueUrl = `https://sqs.${REGION}.amazonaws.com/${account}/parity-events.fifo`;
   const dlqUrl = `https://sqs.${REGION}.amazonaws.com/${account}/parity-events-dlq.fifo`;
   const archiveBucket = `parity-event-archive-${account}-${REGION}`;
-  const sinceMs = Date.now() - WINDOW_MINUTES * 60 * 1000;
+  const sinceMs = Date.now() - windowMinutes * 60 * 1000;
 
   const [ingress, projector, dedupe, queue, dlq, cluster, ledger, archive] = await Promise.all([
     ingressActivity(sinceMs),
@@ -220,13 +235,13 @@ export async function getSystemSnapshot(): Promise<SystemSnapshot> {
     queueDepth(queueUrl),
     queueDepth(dlqUrl),
     clusterStatus('parity-ledger'),
-    ledgerState(),
+    ledgerState(txnLimit),
     archiveState(archiveBucket),
   ]);
 
   return {
     updatedAt: new Date().toISOString(),
-    windowMinutes: WINDOW_MINUTES,
+    windowMinutes,
     region: REGION,
     ingress,
     projector,

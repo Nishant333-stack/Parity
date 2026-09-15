@@ -44,9 +44,13 @@ export class Dashboard extends Construct {
       architecture: lambda.Architecture.ARM_64,
       memorySize: 256,
       // Gathers from five services in one request (logs, DynamoDB, RDS
-      // control plane, S3, SQS, plus four Data API queries) — generous
-      // relative to the other functions here for the same reason.
-      timeout: Duration.seconds(15),
+      // control plane, S3, SQS, plus four Data API queries). The activity
+      // window is now viewer-selectable up to 24h (dashboard-page.ts's
+      // range control), and a 24h CloudWatch Logs scan paginates through
+      // more events than the fixed 15-minute window this was first sized
+      // for — generous headroom, not just generous relative to the other
+      // functions here.
+      timeout: Duration.seconds(25),
       logGroup,
       environment: {
         LEDGER_CLUSTER_ARN_PARAM: LEDGER_SSM_PATHS.clusterArn,
