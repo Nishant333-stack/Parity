@@ -226,6 +226,7 @@ EXEC_POLICY="$(cat <<JSON
         "arn:aws:lambda:${REGION}:${ACCOUNT_ID}:function:parity-webhook-ingress",
         "arn:aws:lambda:${REGION}:${ACCOUNT_ID}:function:parity-ledger-projector",
         "arn:aws:lambda:${REGION}:${ACCOUNT_ID}:function:parity-reconciler",
+        "arn:aws:lambda:${REGION}:${ACCOUNT_ID}:function:parity-dashboard",
         "arn:aws:lambda:${REGION}:${ACCOUNT_ID}:function:ParityStack-*"
       ]
     },

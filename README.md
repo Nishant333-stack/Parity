@@ -19,7 +19,8 @@ ordered queue, a double-entry ledger projected from it (balanced by a database c
 idempotent by Stripe event id, rebuildable from an S3 archive), and an hourly reconciler
 that sums Stripe's own balance transactions, compares them against the ledger's
 `stripe:cash` account, and alarms on nonzero drift. CI/CD via GitHub Actions, OIDC-deployed,
-no stored AWS credentials.
+no stored AWS credentials. A public, read-only dashboard (one Lambda Function URL, no
+separate hosting) shows all of it live — see Dashboard below.
 
 "Week 4" turned out not to be adopting Stripe's v2 events API as originally planned —
 checked directly against this account, `/v2/core/events` doesn't carry this project's event
@@ -133,6 +134,21 @@ curl -i -X POST <WebhookUrl> \
 
 Expect `400 invalid signature`. A forged event must never reach the ledger.
 
+## Dashboard
+
+A public, read-only dashboard is deployed as part of this stack — one Lambda Function URL
+serving both the page and its own JSON API (`/api/snapshot`), polling itself every 20
+seconds, no separate hosting, no auth (a deliberate choice — see `docs/adr/0006`):
+
+```bash
+aws cloudformation describe-stacks --stack-name ParityStack --profile parity --region ap-south-1 \
+  --query "Stacks[0].Outputs[?OutputKey=='DashboardUrl'].OutputValue" --output text
+```
+
+It shows ledger integrity (the global drift a healthy system always reads $0.00 on),
+per-account balances, recent transactions, queue/DLQ depth, projector activity, and cluster
+health — genuinely live, not dependent on this session or any external push.
+
 ## Putting data in, and watching it land in the ledger
 
 There's no form or API to post transactions directly — the ledger only ever moves in
@@ -167,9 +183,7 @@ aws rds-data execute-statement --resource-arn "$CLUSTER_ARN" --secret-arn "$SECR
   --profile parity --region ap-south-1
 ```
 
-There's also a live dashboard (an Artifact, not part of this repo) that renders balances,
-recent transactions, and system health with auto-refresh — ask your Claude Code session for
-the link if you've lost it, or regenerate one with the `dashboard-snapshot.ts` data.
+Or just open the dashboard (see above) — same data, no commands.
 
 ## Layout
 
@@ -182,9 +196,11 @@ lib/constructs/event-pipeline.ts     dedupe table + FIFO queue + DLQ
 lib/constructs/ledger.ts             S3 event archive (the cluster is NOT here — see ADR 0002)
 lib/constructs/projector.ts          SQS-triggered Lambda that projects into the ledger
 lib/constructs/reconciler.ts         hourly Lambda + EventBridge rule + CloudWatch alarm
+lib/constructs/dashboard.ts          Function URL Lambda serving the page + /api/snapshot
 src/handlers/webhook.ts              signature verification, livemode guard
 src/handlers/projector.ts            archive + apply each event, report partial batch failures
 src/handlers/reconciler.ts           recover stranded claims, measure drift, publish the metric
+src/handlers/dashboard.ts            routes / (HTML) and /api/snapshot (JSON) from one Lambda
 src/lib/secrets.ts                   cached SSM SecureString/String reads
 src/lib/data-api.ts                  RDS Data API client, resolves ledger identity from SSM
 src/lib/stripe-client.ts             cached Stripe API client (v1 — see ADR 0005)
@@ -192,13 +208,15 @@ src/lib/projection.ts                Stripe event → journal entries
 src/lib/apply-event.ts               idempotent apply, shared by the projector and reconciler
 src/lib/reconcile.ts                 stranded-claim backfill + drift computation
 src/lib/archive.ts                   batched raw-event writes to S3
+src/lib/system-snapshot.ts           shared by the CLI script and the dashboard's own API
+src/lib/dashboard-page.ts            the dashboard's HTML/CSS/JS, as a template string
 db/schema.sql                        transactions/entries/processed_events + balance trigger
 scripts/create-ledger-cluster.sh     provisions the Express Configuration cluster (not CDK)
 scripts/migrate.ts                   applies db/schema.sql via the Data API
 scripts/test-balance-constraint.ts   the central claim: unbalanced entries are rejected
 scripts/reconcile-once.ts            run one reconciliation pass on demand
 scripts/rebuild-ledger.ts            replays the S3 archive through apply-event.ts
-scripts/dashboard-snapshot.ts        JSON snapshot of the whole system (feeds the live dashboard)
+scripts/dashboard-snapshot.ts        JSON snapshot of the whole system (CLI; same logic as the dashboard's API)
 scripts/verify-template.ts           synthesized-template assertions (no VPC, no NAT gateway)
 scripts/setup-github-oidc.sh         provisions the GitHub Actions OIDC provider + deploy roles
 .github/workflows/ci.yml             typecheck + verify:template on every push/PR

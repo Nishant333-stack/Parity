@@ -1,5 +1,6 @@
 import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
+import { Dashboard } from './constructs/dashboard';
 import { EventPipeline } from './constructs/event-pipeline';
 import { Ledger } from './constructs/ledger';
 import { Projector } from './constructs/projector';
@@ -48,6 +49,10 @@ export class ParityStack extends cdk.Stack {
       stripeSecretKeyParam: SSM_PATHS.stripeSecretKey,
     });
 
+    const dashboard = new Dashboard(this, 'Dashboard', {
+      ledgerClusterId: LEDGER_CLUSTER_ID,
+    });
+
     new cdk.CfnOutput(this, 'WebhookUrl', {
       value: ingress.webhookUrl,
       description: 'Point the Stripe webhook endpoint at this URL',
@@ -83,6 +88,11 @@ export class ParityStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'ReconcilerDriftAlarmTopicArn', {
       value: reconciler.alarmTopic.topicArn,
       description: 'Subscribe an email/endpoint to get notified when the ledger drifts from Stripe',
+    });
+
+    new cdk.CfnOutput(this, 'DashboardUrl', {
+      value: dashboard.url,
+      description: 'Public, no-auth live dashboard — see docs/adr/0006',
     });
   }
 }
