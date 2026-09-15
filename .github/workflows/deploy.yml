@@ -1,6 +1,7 @@
 name: Deploy
 
-# Manually triggered. No stored AWS credentials: GitHub's OIDC token is
+# Runs automatically on every push to main (i.e. every merge), and can still
+# be triggered by hand. No stored AWS credentials: GitHub's OIDC token is
 # exchanged for a short-lived session as parity-github-actions-deploy, which
 # only orchestrates the deploy (CloudFormation changeset calls, CDK asset
 # upload) and PassRoles into parity-cfn-exec-role — a second role, trusted
@@ -8,7 +9,15 @@ name: Deploy
 # actually touch resources. Neither role is the CDK bootstrap's
 # cfn-exec-role, which carries AdministratorAccess on this account.
 # See scripts/setup-github-oidc.sh for the full reasoning.
+#
+# Proven working manually first (workflow_dispatch) before this trigger was
+# added — every permission gap below (a bad OIDC trust condition, a missing
+# iam:PassRole, two different ssm:GetParameter[s] actions) was found by
+# actually running it against the real account, not by reasoning about IAM
+# in the abstract.
 on:
+  push:
+    branches: [main]
   workflow_dispatch: {}
 
 permissions:

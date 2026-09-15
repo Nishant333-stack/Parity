@@ -163,8 +163,9 @@ scripts/setup-github-oidc.sh         provisions the GitHub Actions OIDC provider
 AWS credentials touch GitHub at all — it's a pure local check against the synthesized
 template.
 
-`.github/workflows/deploy.yml` is manually triggered (`workflow_dispatch`) and deploys via
-GitHub's OIDC token exchanged for a short-lived AWS session — no stored access keys, and
+`.github/workflows/deploy.yml` runs automatically on every push to `main` (every merge), and
+can also be triggered by hand (`workflow_dispatch`). It deploys via GitHub's OIDC token
+exchanged for a short-lived AWS session — no stored access keys, and
 **not** the CDK bootstrap's own execution role, which carries `AdministratorAccess` on this
 account (confirmed, not assumed). `scripts/setup-github-oidc.sh` provisions two roles
 instead:
